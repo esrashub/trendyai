@@ -39,6 +39,21 @@ import {
   where,
 } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
+
+/**
+ * Firebase Auth state'i hazır olana kadar bekler ve uid döner.
+ * auth.currentUser, auth initialize olmadan null dönebilir.
+ */
+async function getUid(): Promise<string | null> {
+  return new Promise((resolve) => {
+    // onAuthStateChanged, mevcut state ile anında tetiklenir
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      unsubscribe();
+      resolve(user?.uid ?? null);
+    });
+  });
+}
 
 // Helper function to simulate API delay
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -519,7 +534,7 @@ export async function startWeeklyFlow(): Promise<{ success: boolean; flowId: str
  * Get dashboard summary — Firestore'dan gerçek veri
  */
 export async function getDashboardSummary(): Promise<DashboardSummary> {
-  const uid = auth.currentUser?.uid;
+  const uid = await getUid();
   if (!uid) return mockDashboardSummary;
 
   try {
@@ -576,7 +591,7 @@ export async function getUpcomingScheduledPosts(): Promise<ScheduledPost[]> {
  * Get all content ideas — Firestore: contentIdeas (userId == uid)
  */
 export async function getContentIdeas(): Promise<ContentIdea[]> {
-  const uid = auth.currentUser?.uid;
+  const uid = await getUid();
   if (!uid) return [];
 
   const q = query(
