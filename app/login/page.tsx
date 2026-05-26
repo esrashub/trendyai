@@ -58,13 +58,22 @@ export default function LoginPage() {
       }
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code;
-      if (code === "auth/user-not-found" || code === "auth/wrong-password" || code === "auth/invalid-credential") {
-        setErrors({ password: "Email veya şifre hatalı" });
+      const message = (err as { message?: string })?.message;
+      
+      if (code === "auth/user-not-found") {
+        setErrors({ email: "Bu email adresi ile kayıtlı hesap bulunamadı" });
+      } else if (code === "auth/wrong-password") {
+        setErrors({ password: "Şifre hatalı" });
+      } else if (code === "auth/invalid-credential") {
+        setErrors({ password: "Email veya şifre hatalı. Şifrenizi sıfırladıysanız yeni şifrenizi kullanın." });
       } else if (code === "auth/invalid-email") {
         setErrors({ email: "Geçersiz email adresi" });
       } else if (code === "auth/too-many-requests") {
-        toast.error("Çok fazla deneme. Lütfen bir süre bekleyin.");
+        toast.error("Çok fazla başarısız deneme. Lütfen birkaç dakika bekleyin veya şifrenizi sıfırlayın.");
+      } else if (code === "auth/user-disabled") {
+        toast.error("Bu hesap devre dışı bırakılmış. Lütfen destek ile iletişime geçin.");
       } else {
+        console.error("[v0] Unexpected login error:", code, message);
         toast.error("Giriş yapılamadı. Lütfen tekrar deneyin.");
       }
     } finally {
