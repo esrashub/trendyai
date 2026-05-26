@@ -35,7 +35,7 @@ import {
 } from "@/components/ui/card";
 import { toast } from "sonner";
 import { OnboardingStepper } from "@/components/layout/onboarding-stepper";
-import { saveBrandIdentity, generateBrandSummary } from "@/lib/api";
+import { saveBrandIdentity, generateBrandSummary, getBrandIdentityFormData } from "@/lib/api";
 import {
   toneOptions,
   communicationStyleOptions,
@@ -70,35 +70,34 @@ const EMPTY_FORM: BrandIdentityFormData = {
   designNotes: "",
 };
 
-const STORAGE_KEY = "onboarding_brand_identity";
-
-function loadFromStorage() {
-  if (typeof window === "undefined") return { formData: EMPTY_FORM, aiSummary: null };
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      return { formData: parsed.formData ?? EMPTY_FORM, aiSummary: parsed.aiSummary ?? null };
-    }
-  } catch {}
-  return { formData: EMPTY_FORM, aiSummary: null };
-}
-
 export default function BrandIdentityPage() {
   const router = useRouter();
-  const initial = loadFromStorage();
-  const [formData, setFormData] = useState<BrandIdentityFormData>(initial.formData);
+  const [formData, setFormData] = useState<BrandIdentityFormData>(EMPTY_FORM);
   const [isSaving, setIsSaving] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [aiSummary, setAiSummary] = useState<string | null>(initial.aiSummary);
+  const [isLoadingData, setIsLoadingData] = useState(true);
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Her değişiklikte localStorage'a kaydet
+  // Firebase'den verileri yükle
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ formData, aiSummary }));
-    } catch {}
-  }, [formData, aiSummary]);
+    const loadData = async () => {
+      try {
+        const data = await getBrandIdentityFormData();
+        if (data) {
+          setFormData(data);
+          if (data.aiSummary) {
+            setAiSummary(data.aiSummary);
+          }
+        }
+      } catch (error) {
+        console.error("Marka kimliği yüklenemedi:", error);
+      } finally {
+        setIsLoadingData(false);
+      }
+    };
+    loadData();
+  }, []);
 
   const validate = () => {
     const e: Record<string, string> = {};
@@ -161,7 +160,6 @@ export default function BrandIdentityPage() {
     setIsSaving(true);
     try {
       await saveBrandIdentity({ ...formData, aiSummary: aiSummary ?? undefined });
-      localStorage.removeItem(STORAGE_KEY);
       router.push("/onboarding/platforms");
     } catch {
       toast.error("Bir hata oluştu");
@@ -169,6 +167,14 @@ export default function BrandIdentityPage() {
       setIsSaving(false);
     }
   };
+
+  if (isLoadingData) {
+    return (
+      <div className="flex min-h-[400px] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-6xl">

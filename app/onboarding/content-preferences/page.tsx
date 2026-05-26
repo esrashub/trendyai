@@ -23,7 +23,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { OnboardingStepper } from "@/components/layout/onboarding-stepper";
-import { saveContentPreferences } from "@/lib/api";
+import { saveContentPreferences, getContentPreferences } from "@/lib/api";
 import {
   weeklyFrequencyOptions,
   dayOptions,
@@ -31,8 +31,6 @@ import {
   contentFormatOptions,
   contentGoalOptions,
 } from "@/lib/mock-data";
-
-const CONTENT_PREFS_KEY = "onboarding_content_preferences";
 
 const CONTENT_PREFS_DEFAULTS = {
   weeklyFrequency: "",
@@ -44,25 +42,36 @@ const CONTENT_PREFS_DEFAULTS = {
   customNotes: "",
 };
 
-function loadContentPrefs() {
-  if (typeof window === "undefined") return CONTENT_PREFS_DEFAULTS;
-  try {
-    const saved = localStorage.getItem(CONTENT_PREFS_KEY);
-    if (saved) return JSON.parse(saved);
-  } catch {}
-  return CONTENT_PREFS_DEFAULTS;
-}
-
 export default function ContentPreferencesPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
-  const [formData, setFormData] = useState(loadContentPrefs);
+  const [isLoadingData, setIsLoadingData] = useState(true);
+  const [formData, setFormData] = useState(CONTENT_PREFS_DEFAULTS);
 
+  // Firebase'den verileri yükle
   useEffect(() => {
-    try {
-      localStorage.setItem(CONTENT_PREFS_KEY, JSON.stringify(formData));
-    } catch {}
-  }, [formData]);
+    const loadData = async () => {
+      try {
+        const data = await getContentPreferences();
+        if (data) {
+          setFormData({
+            weeklyFrequency: data.weeklyFrequency ?? "",
+            preferredDays: data.preferredDays ?? [],
+            preferredTimeRange: data.preferredTimeRange ?? "",
+            contentFormats: data.contentFormats ?? [],
+            weeklyGoal: data.weeklyGoal ?? "",
+            specialCampaign: data.specialCampaign ?? "",
+            customNotes: data.customNotes ?? "",
+          });
+        }
+      } catch (error) {
+        console.error("İçerik tercihleri yüklenemedi:", error);
+      } finally {
+        setIsLoadingData(false);
+      }
+    };
+    loadData();
+  }, []);
 
   const handleDayChange = (day: string, checked: boolean) => {
     setFormData((prev) => ({
@@ -103,7 +112,6 @@ export default function ContentPreferencesPage() {
     setIsLoading(true);
     try {
       await saveContentPreferences(formData);
-      localStorage.removeItem(CONTENT_PREFS_KEY);
       router.push("/onboarding/review");
     } catch {
       toast.error("Bir hata oluştu");
@@ -111,6 +119,14 @@ export default function ContentPreferencesPage() {
       setIsLoading(false);
     }
   };
+
+  if (isLoadingData) {
+    return (
+      <div className="flex min-h-[400px] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-6xl">

@@ -16,14 +16,12 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { OnboardingStepper } from "@/components/layout/onboarding-stepper";
-import { saveUserInfo } from "@/lib/api";
+import { saveUserInfo, getUserInfo } from "@/lib/api";
 import {
   professionOptions,
   businessTypeOptions,
   languageOptions,
 } from "@/lib/mock-data";
-
-const USER_INFO_KEY = "onboarding_user_info";
 
 const USER_INFO_DEFAULTS = {
   fullName: "",
@@ -36,26 +34,29 @@ const USER_INFO_DEFAULTS = {
   city: "",
 };
 
-function loadUserInfo() {
-  if (typeof window === "undefined") return USER_INFO_DEFAULTS;
-  try {
-    const saved = localStorage.getItem(USER_INFO_KEY);
-    if (saved) return JSON.parse(saved);
-  } catch {}
-  return USER_INFO_DEFAULTS;
-}
-
 export default function UserInfoPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
-  const [formData, setFormData] = useState(loadUserInfo);
+  const [isLoadingData, setIsLoadingData] = useState(true);
+  const [formData, setFormData] = useState(USER_INFO_DEFAULTS);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  // Firebase'den verileri yükle
   useEffect(() => {
-    try {
-      localStorage.setItem(USER_INFO_KEY, JSON.stringify(formData));
-    } catch {}
-  }, [formData]);
+    const loadData = async () => {
+      try {
+        const data = await getUserInfo();
+        if (data) {
+          setFormData(data);
+        }
+      } catch (error) {
+        console.error("Kullanıcı bilgileri yüklenemedi:", error);
+      } finally {
+        setIsLoadingData(false);
+      }
+    };
+    loadData();
+  }, []);
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -97,7 +98,6 @@ export default function UserInfoPage() {
     setIsLoading(true);
     try {
       await saveUserInfo(formData);
-      localStorage.removeItem(USER_INFO_KEY);
       router.push("/onboarding/brand-identity");
     } catch {
       toast.error("Bir hata oluştu");
@@ -105,6 +105,14 @@ export default function UserInfoPage() {
       setIsLoading(false);
     }
   };
+
+  if (isLoadingData) {
+    return (
+      <div className="flex min-h-[400px] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-6xl">

@@ -1,14 +1,9 @@
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
 
-export async function POST(request: NextRequest) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { success: false, error: "GEMINI_API_KEY tanımlı değil" },
-      { status: 500 }
-    );
-  }
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
+export async function POST(request: NextRequest) {
   try {
     const data = await request.json();
 
@@ -47,30 +42,13 @@ Aşağıdaki formatta, her başlık için 1-2 cümle yaz. Tam olarak bu formatı
 
 **Görsel Yön:** [görsel stil ve renkler]`;
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
-      }
-    );
+    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+    
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    const text = response.text();
 
-    if (!res.ok) {
-      const errText = await res.text();
-      console.error("[brand-summary] Gemini API hatası:", res.status, errText);
-      return NextResponse.json(
-        { success: false, error: "Gemini API hatası", detail: errText },
-        { status: 500 }
-      );
-    }
-
-    const json = await res.json();
-    const summary = json.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-
-    return NextResponse.json({ success: true, summary });
+    return NextResponse.json({ success: true, summary: text });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Bilinmeyen hata";
     console.error("[brand-summary] Hata:", message);

@@ -36,28 +36,53 @@ export default function LoginPage() {
       const credential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
       const uid = credential.user.uid;
 
-      // Onboarding tamamlandı mı kontrol et
-      const [brandSnap, prefsSnap] = await Promise.all([
-        getDoc(doc(db, "brandIdentities", uid)),
-        getDoc(doc(db, "weeklyPreferences", uid)),
-      ]);
+      // Onboarding durumunu kontrol et
+      try {
+        const [userSnap, brandSnap, platformsSnap, prefsSnap] = await Promise.all([
+          getDoc(doc(db, "users", uid)),
+          getDoc(doc(db, "brandIdentities", uid)),
+          getDoc(doc(db, "connectedPlatforms", uid)),
+          getDoc(doc(db, "weeklyPreferences", uid)),
+        ]);
 
-      if (!brandSnap.exists()) {
+        // Adım adım kontrol - kaldığı yerden devam etsin
+        if (!userSnap.exists() || !userSnap.data()?.fullName) {
+          router.push("/onboarding/user-info");
+        } else if (!brandSnap.exists() || !brandSnap.data()?.brandName) {
+          router.push("/onboarding/brand-identity");
+        } else if (!platformsSnap.exists()) {
+          router.push("/onboarding/platforms");
+        } else if (!prefsSnap.exists()) {
+          router.push("/onboarding/content-preferences");
+        } else {
+          router.push("/dashboard/content-ideas");
+        }
+      } catch (firestoreError) {
+        // Firestore okuma hatası olursa onboarding'e yönlendir
+        console.warn("Firestore read error, redirecting to onboarding:", firestoreError);
         router.push("/onboarding/user-info");
-      } else if (!prefsSnap.exists()) {
-        router.push("/onboarding/content-preferences");
-      } else {
-        router.push("/dashboard/content-ideas");
       }
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code;
-      if (code === "auth/user-not-found" || code === "auth/wrong-password" || code === "auth/invalid-credential") {
-        setErrors({ password: "Email veya şifre hatalı" });
+      const message = (err as { message?: string })?.message;
+      
+      if (code === "auth/user-not-found") {
+        setErrors({ email: "Bu email adresi ile kayıtlı hesap bulunamadı" });
+      } else if (code === "auth/wrong-password") {
+        setErrors({ password: "Şifre hatalı" });
+      } else if (code === "auth/invalid-credential") {
+        setErrors({ password: "Email veya şifre hatalı. Şifrenizi sıfırladıysanız yeni şifrenizi kullanın." });
       } else if (code === "auth/invalid-email") {
         setErrors({ email: "Geçersiz email adresi" });
       } else if (code === "auth/too-many-requests") {
-        toast.error("Çok fazla deneme. Lütfen bir süre bekleyin.");
+        toast.error("Çok fazla başarısız deneme. Lütfen birkaç dakika bekleyin veya şifrenizi sıfırlayın.");
+      } else if (code === "auth/user-disabled") {
+        toast.error("Bu hesap devre dışı bırakılmış. Lütfen destek ile iletişime geçin.");
+      } else if (code === "permission-denied") {
+        // Firestore izin hatası - giriş başarılı, onboarding'e yönlendir
+        router.push("/onboarding/user-info");
       } else {
+        console.error("[v0] Unexpected login error:", code, message);
         toast.error("Giriş yapılamadı. Lütfen tekrar deneyin.");
       }
     } finally {
@@ -113,7 +138,12 @@ export default function LoginPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="password">Şifre</Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="password">Şifre</Label>
+                    <Link href="/forgot-password" className="text-xs text-primary hover:underline">
+                      Şifremi Unuttum
+                    </Link>
+                  </div>
                   <div className="relative">
                     <Input
                       id="password"
