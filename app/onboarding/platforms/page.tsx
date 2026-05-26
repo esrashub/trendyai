@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Loader2,
@@ -41,7 +41,7 @@ const XIcon = () => (
   </svg>
 );
 
-export default function PlatformsPage() {
+function PlatformsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
@@ -131,7 +131,6 @@ export default function PlatformsPage() {
         access_denied: "Erişim reddedildi. Lütfen izinleri onaylayın.",
       };
       toast.error(errorMessages[error] || `Bağlantı hatası: ${error}`);
-      // Clear URL params
       router.replace("/onboarding/platforms");
       return;
     }
@@ -140,7 +139,6 @@ export default function PlatformsPage() {
       try {
         const connectionData = JSON.parse(atob(data));
         
-        // Save to Firestore
         saveConnectedPlatform(connectionData)
           .then(() => {
             setPlatforms((prev) =>
@@ -162,7 +160,6 @@ export default function PlatformsPage() {
             toast.error("Bağlantı kaydedilemedi");
           });
 
-        // Clear URL params
         router.replace("/onboarding/platforms");
       } catch (err) {
         console.error("Failed to parse connection data:", err);
@@ -176,8 +173,6 @@ export default function PlatformsPage() {
         p.id === platformId ? { ...p, status: "connecting" as PlatformStatus } : p
       )
     );
-
-    // Redirect to OAuth
     window.location.href = `/api/auth/connect?platform=${platformId}`;
   };
 
@@ -239,13 +234,11 @@ export default function PlatformsPage() {
 
   return (
     <div className="mx-auto max-w-6xl">
-      {/* Stepper */}
       <div className="mb-8">
         <OnboardingStepper currentStep={3} />
       </div>
 
       <div className="grid gap-8 lg:grid-cols-3">
-        {/* Platforms */}
         <div className="lg:col-span-2">
           <Card className="border-0 shadow-lg">
             <CardHeader>
@@ -319,7 +312,6 @@ export default function PlatformsPage() {
                 ))}
               </div>
 
-              {/* Action Buttons */}
               <div className="flex flex-col gap-3 border-t pt-6 sm:flex-row sm:justify-between">
                 <Button
                   variant="outline"
@@ -341,7 +333,6 @@ export default function PlatformsPage() {
           </Card>
         </div>
 
-        {/* Summary Card */}
         <div className="lg:col-span-1">
           <Card className="sticky top-24 border-0 bg-primary/5 shadow-lg">
             <CardHeader>
@@ -395,5 +386,19 @@ export default function PlatformsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function PlatformsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[400px] items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      }
+    >
+      <PlatformsContent />
+    </Suspense>
   );
 }
