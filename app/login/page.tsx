@@ -37,24 +37,30 @@ export default function LoginPage() {
       const uid = credential.user.uid;
 
       // Onboarding durumunu kontrol et
-      const [userSnap, brandSnap, platformsSnap, prefsSnap] = await Promise.all([
-        getDoc(doc(db, "users", uid)),
-        getDoc(doc(db, "brandIdentities", uid)),
-        getDoc(doc(db, "connectedPlatforms", uid)),
-        getDoc(doc(db, "weeklyPreferences", uid)),
-      ]);
+      try {
+        const [userSnap, brandSnap, platformsSnap, prefsSnap] = await Promise.all([
+          getDoc(doc(db, "users", uid)),
+          getDoc(doc(db, "brandIdentities", uid)),
+          getDoc(doc(db, "connectedPlatforms", uid)),
+          getDoc(doc(db, "weeklyPreferences", uid)),
+        ]);
 
-      // Adım adım kontrol - kaldığı yerden devam etsin
-      if (!userSnap.exists() || !userSnap.data()?.fullName) {
+        // Adım adım kontrol - kaldığı yerden devam etsin
+        if (!userSnap.exists() || !userSnap.data()?.fullName) {
+          router.push("/onboarding/user-info");
+        } else if (!brandSnap.exists() || !brandSnap.data()?.brandName) {
+          router.push("/onboarding/brand-identity");
+        } else if (!platformsSnap.exists()) {
+          router.push("/onboarding/platforms");
+        } else if (!prefsSnap.exists()) {
+          router.push("/onboarding/content-preferences");
+        } else {
+          router.push("/dashboard/content-ideas");
+        }
+      } catch (firestoreError) {
+        // Firestore okuma hatası olursa onboarding'e yönlendir
+        console.warn("Firestore read error, redirecting to onboarding:", firestoreError);
         router.push("/onboarding/user-info");
-      } else if (!brandSnap.exists() || !brandSnap.data()?.brandName) {
-        router.push("/onboarding/brand-identity");
-      } else if (!platformsSnap.exists()) {
-        router.push("/onboarding/platforms");
-      } else if (!prefsSnap.exists()) {
-        router.push("/onboarding/content-preferences");
-      } else {
-        router.push("/dashboard/content-ideas");
       }
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code;
@@ -72,6 +78,9 @@ export default function LoginPage() {
         toast.error("Çok fazla başarısız deneme. Lütfen birkaç dakika bekleyin veya şifrenizi sıfırlayın.");
       } else if (code === "auth/user-disabled") {
         toast.error("Bu hesap devre dışı bırakılmış. Lütfen destek ile iletişime geçin.");
+      } else if (code === "permission-denied") {
+        // Firestore izin hatası - giriş başarılı, onboarding'e yönlendir
+        router.push("/onboarding/user-info");
       } else {
         console.error("[v0] Unexpected login error:", code, message);
         toast.error("Giriş yapılamadı. Lütfen tekrar deneyin.");
