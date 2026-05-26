@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
-import { onAuthStateChanged, signOut, type User as FirebaseUser } from "firebase/auth";
+import { onAuthStateChanged, signOut, sendEmailVerification, type User as FirebaseUser } from "firebase/auth";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 
@@ -10,6 +10,7 @@ interface UserProfile {
   email: string;
   profession: string;
   createdAt: string;
+  emailVerified?: boolean;
 }
 
 interface AuthContextType {
@@ -18,6 +19,7 @@ interface AuthContextType {
   loading: boolean;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  resendVerificationEmail: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -26,6 +28,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   logout: async () => {},
   refreshProfile: async () => {},
+  resendVerificationEmail: async () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -93,8 +96,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (user) await fetchProfile(user);
   };
 
+  const resendVerificationEmail = async () => {
+    if (user && !user.emailVerified) {
+      await sendEmailVerification(user);
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, logout, refreshProfile }}>
+    <AuthContext.Provider value={{ user, profile, loading, logout, refreshProfile, resendVerificationEmail }}>
       {children}
     </AuthContext.Provider>
   );

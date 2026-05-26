@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Sparkles, Eye, EyeOff, Loader2, ArrowRight } from "lucide-react";
-import { createUserWithEmailAndPassword } from "firebase/auth";
+import { createUserWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
@@ -47,15 +47,20 @@ export default function RegisterPage() {
     try {
       const credential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
       const uid = credential.user.uid;
+      
+      // Email doğrulama gönder
+      await sendEmailVerification(credential.user);
+      
       await setDoc(doc(db, "users", uid), {
         fullName: formData.fullName,
         email: formData.email,
         profession: formData.profession || "",
         niche: formData.profession || "",
         status: "active",
+        emailVerified: false,
         createdAt: new Date().toISOString(),
       });
-      toast.success("Hesabınız oluşturuldu!");
+      toast.success("Hesabınız oluşturuldu! Email adresinizi doğrulamak için gelen kutunuzu kontrol edin.");
       router.push("/onboarding/user-info");
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code;

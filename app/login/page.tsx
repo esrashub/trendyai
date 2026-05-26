@@ -36,14 +36,21 @@ export default function LoginPage() {
       const credential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
       const uid = credential.user.uid;
 
-      // Onboarding tamamlandı mı kontrol et
-      const [brandSnap, prefsSnap] = await Promise.all([
+      // Onboarding durumunu kontrol et
+      const [userSnap, brandSnap, platformsSnap, prefsSnap] = await Promise.all([
+        getDoc(doc(db, "users", uid)),
         getDoc(doc(db, "brandIdentities", uid)),
+        getDoc(doc(db, "connectedPlatforms", uid)),
         getDoc(doc(db, "weeklyPreferences", uid)),
       ]);
 
-      if (!brandSnap.exists()) {
+      // Adım adım kontrol - kaldığı yerden devam etsin
+      if (!userSnap.exists() || !userSnap.data()?.fullName) {
         router.push("/onboarding/user-info");
+      } else if (!brandSnap.exists() || !brandSnap.data()?.brandName) {
+        router.push("/onboarding/brand-identity");
+      } else if (!platformsSnap.exists()) {
+        router.push("/onboarding/platforms");
       } else if (!prefsSnap.exists()) {
         router.push("/onboarding/content-preferences");
       } else {
@@ -113,7 +120,12 @@ export default function LoginPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="password">Şifre</Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="password">Şifre</Label>
+                    <Link href="/forgot-password" className="text-xs text-primary hover:underline">
+                      Şifremi Unuttum
+                    </Link>
+                  </div>
                   <div className="relative">
                     <Input
                       id="password"
