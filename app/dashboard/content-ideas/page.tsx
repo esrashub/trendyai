@@ -17,6 +17,7 @@ import {
   getContentIdeas,
   approveContentIdea,
   rejectContentIdea,
+  deleteContentIdea,
   regenerateContentIdeaWithFeedback,
 } from "@/lib/api";
 import type { ContentIdea } from "@/types";
@@ -84,6 +85,19 @@ export default function ContentIdeasPage() {
       toast.success("İçerik fikri reddedildi");
     } catch {
       toast.error("Reddetme başarısız");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDelete = async (ideaId: string) => {
+    setActionLoading(ideaId);
+    try {
+      await deleteContentIdea(ideaId);
+      setIdeas((prev) => prev.filter((idea) => idea.id !== ideaId));
+      toast.success("İçerik fikri silindi");
+    } catch {
+      toast.error("Silme başarısız");
     } finally {
       setActionLoading(null);
     }
@@ -200,6 +214,7 @@ export default function ContentIdeasPage() {
               onReject={handleReject}
               onFeedback={handleFeedback}
               onCreate={handleCreate}
+              onDelete={handleDelete}
               isLoading={actionLoading === idea.id}
             />
           ))}
