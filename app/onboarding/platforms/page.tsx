@@ -32,6 +32,7 @@ interface Platform {
   status: PlatformStatus;
   accountName?: string;
   profilePicture?: string;
+  enabled: boolean;
 }
 
 const XIcon = () => (
@@ -53,6 +54,7 @@ export default function PlatformsPage() {
       description:
         "Instagram Business hesabınızı bağlayarak post, story ve reel içerikleri paylaşın.",
       status: "disconnected",
+      enabled: true,
     },
     {
       id: "linkedin",
@@ -61,6 +63,7 @@ export default function PlatformsPage() {
       description:
         "LinkedIn profilinizle profesyonel içerikler ve makaleler paylaşın.",
       status: "disconnected",
+      enabled: false,
     },
     {
       id: "twitter",
@@ -69,6 +72,7 @@ export default function PlatformsPage() {
       description:
         "X hesabınızla kısa ve etkili içerikler, thread'ler paylaşın.",
       status: "disconnected",
+      enabled: false,
     },
     {
       id: "facebook",
@@ -77,6 +81,7 @@ export default function PlatformsPage() {
       description:
         "Facebook sayfanızla geniş kitlelere ulaşın ve topluluk oluşturun.",
       status: "disconnected",
+      enabled: false,
     },
   ]);
 
@@ -298,14 +303,14 @@ export default function PlatformsPage() {
                           <Button
                             size="sm"
                             onClick={() => handleConnect(platform.id)}
-                            disabled={platform.status === "connecting"}
+                            disabled={platform.status === "connecting" || !platform.enabled}
                           >
                             {platform.status === "connecting" ? (
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             ) : (
                               <ExternalLink className="mr-2 h-4 w-4" />
                             )}
-                            Bağla
+                            {!platform.enabled ? "Yakında" : "Bağla"}
                           </Button>
                         )}
                       </div>
