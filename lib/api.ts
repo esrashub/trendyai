@@ -81,6 +81,30 @@ export async function logoutUser(): Promise<{ success: boolean }> {
 // ==========================================
 
 /**
+ * Get user information for onboarding
+ * Reads from Firestore: users/{uid}
+ */
+export async function getUserInfo(): Promise<UserInfoFormData | null> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) return null;
+
+  const snap = await getDoc(doc(db, "users", uid));
+  if (!snap.exists()) return null;
+  
+  const data = snap.data();
+  return {
+    fullName: data.fullName ?? "",
+    email: data.email ?? "",
+    profession: data.profession ?? "",
+    businessType: data.businessType ?? "",
+    language: data.language ?? "turkce",
+    timezone: data.timezone ?? "Europe/Istanbul",
+    country: data.country ?? "Türkiye",
+    city: data.city ?? "",
+  };
+}
+
+/**
  * Save user information (onboarding step 1)
  * Writes to Firestore: users/{uid}
  */
@@ -157,6 +181,44 @@ export async function saveBrandIdentity(data: BrandIdentityFormData): Promise<{ 
 
   await setDoc(doc(db, "brandIdentities", uid), brand);
   return { success: true, brand };
+}
+
+/**
+ * Get brand identity form data for current user (for onboarding)
+ * Reads from Firestore: brandIdentities/{uid}
+ */
+export async function getBrandIdentityFormData(): Promise<BrandIdentityFormData | null> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) return null;
+
+  const snap = await getDoc(doc(db, "brandIdentities", uid));
+  if (!snap.exists()) return null;
+  
+  const data = snap.data() as BrandIdentity;
+  return {
+    brandName: data.brandName ?? "",
+    sector: data.sector ?? "",
+    description: data.description ?? "",
+    websiteUrl: data.websiteUrl ?? "",
+    instagramUrl: data.instagramUrl ?? "",
+    linkedinUrl: data.linkedinUrl ?? "",
+    targetAudienceDescription: data.targetAudience?.description ?? "",
+    ageRange: data.targetAudience?.ageRange ?? "",
+    genderFocus: data.targetAudience?.genderFocus ?? "",
+    problems: data.targetAudience?.problems ?? "",
+    expectations: data.targetAudience?.expectations ?? "",
+    tones: data.brandVoice?.tones ?? [],
+    emotionalKeywords: data.brandVoice?.emotionalKeywords ?? "",
+    wordsToAvoid: data.brandVoice?.wordsToAvoid ?? "",
+    communicationStyle: data.brandVoice?.communicationStyle ?? "",
+    goals: data.contentStrategy?.goals ?? [],
+    themes: data.contentStrategy?.themes ?? "",
+    ctaPreference: data.contentStrategy?.ctaPreference ?? "",
+    mainColors: data.visualIdentity?.mainColors ?? "",
+    visualStyle: data.visualIdentity?.visualStyle ?? "",
+    designNotes: data.visualIdentity?.designNotes ?? "",
+    aiSummary: data.aiSummary,
+  };
 }
 
 /**
