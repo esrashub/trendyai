@@ -8,6 +8,7 @@ import {
   Calendar,
   Clock,
   TrendingUp,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,6 +21,7 @@ interface ContentIdeaCardProps {
   onReject: (id: string) => void;
   onFeedback: (id: string) => void;
   onCreate: (id: string) => void;
+  onDelete: (id: string) => void;
   isLoading?: boolean;
 }
 
@@ -29,6 +31,7 @@ export function ContentIdeaCard({
   onReject,
   onFeedback,
   onCreate,
+  onDelete,
   isLoading,
 }: ContentIdeaCardProps) {
   const getStatusBadge = (status: string) => {
@@ -183,6 +186,17 @@ export function ContentIdeaCard({
               Feedback Ver
             </Button>
           )}
+          {/* Sil butonu — tüm durumlarda görünür */}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => onDelete(idea.id)}
+            disabled={isLoading}
+            className="ml-auto gap-1 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          >
+            <Trash2 className="h-4 w-4" />
+            Sil
+          </Button>
         </div>
       </CardContent>
     </Card>

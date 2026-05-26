@@ -27,7 +27,17 @@ import {
   mockSettings,
 } from "./mock-data";
 
-import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  getDocs,
+  collection,
+  query,
+  where,
+} from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 
 // Helper function to simulate API delay
@@ -346,7 +356,6 @@ export async function getConnectedPlatforms(): Promise<PlatformAccount[]> {
   const uid = auth.currentUser?.uid;
   if (!uid) return [];
 
-  const { getDocs, collection } = await import("firebase/firestore");
   const snapshot = await getDocs(collection(db, "connectedPlatforms", uid, "platforms"));
   
   return snapshot.docs.map((doc) => ({
@@ -369,7 +378,6 @@ export async function disconnectPlatform(platformId: string): Promise<{ success:
   const uid = auth.currentUser?.uid;
   if (!uid) throw new Error("Kullanıcı girişi gerekli");
 
-  const { deleteDoc } = await import("firebase/firestore");
   await deleteDoc(doc(db, "connectedPlatforms", uid, "platforms", platformId));
   
   return { success: true };
@@ -508,21 +516,47 @@ export async function startWeeklyFlow(): Promise<{ success: boolean; flowId: str
 // ==========================================
 
 /**
- * Get dashboard summary
- * Future endpoint: GET /api/dashboard/summary
+ * Get dashboard summary — Firestore'dan gerçek veri
  */
 export async function getDashboardSummary(): Promise<DashboardSummary> {
-  await delay(500);
-  return mockDashboardSummary;
+  const uid = auth.currentUser?.uid;
+  if (!uid) return mockDashboardSummary;
+
+  try {
+    const [ideasSnap, platformsSnap] = await Promise.all([
+      getDocs(query(collection(db, "contentIdeas"), where("userId", "==", uid))),
+      getDocs(collection(db, "connectedPlatforms", uid, "platforms")),
+    ]);
+
+    const totalContent = ideasSnap.size;
+    const pendingApproval = ideasSnap.docs.filter(
+      (d) => d.data().status === "pending"
+    ).length;
+    const thisWeekPlanned = ideasSnap.docs.filter(
+      (d) => d.data().status === "approved"
+    ).length;
+    const connectedPlatformsCount = platformsSnap.size;
+
+    return {
+      totalContent,
+      pendingApproval,
+      thisWeekPlanned,
+      connectedPlatforms: connectedPlatformsCount,
+      weeklyFlowStatus: totalContent > 0 ? "completed" : "pending",
+      brandProfile: 100,
+    };
+  } catch (err) {
+    console.warn("getDashboardSummary hata:", err);
+    return mockDashboardSummary;
+  }
 }
 
 /**
- * Get recent content ideas
- * Future endpoint: GET /api/dashboard/recent-content
+ * Get recent content ideas — Firestore'dan son 3 fikir
  */
 export async function getRecentContentIdeas(): Promise<ContentIdea[]> {
-  await delay(500);
-  return mockContentIdeas.slice(0, 3);
+  const ideas = await getContentIdeas();
+  return ideas.slice(0, 3);
 }
 
 /**
@@ -539,74 +573,93 @@ export async function getUpcomingScheduledPosts(): Promise<ScheduledPost[]> {
 // ==========================================
 
 /**
- * Get all content ideas
- * Future endpoint: GET /api/content-ideas
- * Database relation: This reads content_ideas table.
+ * Get all content ideas — Firestore: contentIdeas (userId == uid)
  */
 export async function getContentIdeas(): Promise<ContentIdea[]> {
-  await delay(600);
-  return mockContentIdeas;
+  const uid = auth.currentUser?.uid;
+  if (!uid) return [];
+
+  const q = query(
+    collection(db, "contentIdeas"),
+    where("userId", "==", uid)
+  );
+  const snapshot = await getDocs(q);
+  const ideas = snapshot.docs.map(
+    (d) => ({ id: d.id, ...d.data() } as ContentIdea)
+  );
+  // createdAt'a göre azalan sıra (index gerekmeden client-side)
+  return ideas.sort(
+    (a, b) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
 }
 
 /**
- * Approve content idea
- * Future endpoint: POST /api/content-ideas/:id/approve
+ * Approve content idea — Firestore güncelleme
  */
-export async function approveContentIdea(ideaId: string): Promise<{ success: boolean; idea: ContentIdea }> {
-  await delay(500);
-  const idea = mockContentIdeas.find((i) => i.id === ideaId);
-  if (idea) {
-    return {
-      success: true,
-      idea: { ...idea, status: "approved" },
-    };
-  }
-  throw new Error("İçerik fikri bulunamadı");
+export async function approveContentIdea(
+  ideaId: string
+): Promise<{ success: boolean; idea: ContentIdea }> {
+  await updateDoc(doc(db, "contentIdeas", ideaId), {
+    status: "approved",
+    updatedAt: new Date().toISOString(),
+  });
+  return { success: true, idea: { id: ideaId, status: "approved" } as ContentIdea };
 }
 
 /**
- * Reject content idea
- * Future endpoint: POST /api/content-ideas/:id/reject
+ * Reject content idea — Firestore güncelleme
  */
-export async function rejectContentIdea(ideaId: string): Promise<{ success: boolean; idea: ContentIdea }> {
-  await delay(500);
-  const idea = mockContentIdeas.find((i) => i.id === ideaId);
-  if (idea) {
-    return {
-      success: true,
-      idea: { ...idea, status: "rejected" },
-    };
-  }
-  throw new Error("İçerik fikri bulunamadı");
+export async function rejectContentIdea(
+  ideaId: string
+): Promise<{ success: boolean; idea: ContentIdea }> {
+  await updateDoc(doc(db, "contentIdeas", ideaId), {
+    status: "rejected",
+    updatedAt: new Date().toISOString(),
+  });
+  return { success: true, idea: { id: ideaId, status: "rejected" } as ContentIdea };
+}
+
+/**
+ * Delete content idea — Firestore'dan sil
+ */
+export async function deleteContentIdea(
+  ideaId: string
+): Promise<{ success: boolean }> {
+  await deleteDoc(doc(db, "contentIdeas", ideaId));
+  return { success: true };
 }
 
 /**
  * Regenerate content idea with feedback
- * Future endpoint: POST /api/content-ideas/:id/feedback-regenerate
- * n8n webhook: POST /webhook/regenerate-content-idea
+ * Firestore'da feedback + status="regenerated" kaydeder.
+ * n8n webhook: POST /webhook/regenerate-content-idea (gelecekte bağlanacak)
  */
 export async function regenerateContentIdeaWithFeedback(
   ideaId: string,
   feedback: string
 ): Promise<{ success: boolean; idea: ContentIdea }> {
-  await delay(2000);
+  await updateDoc(doc(db, "contentIdeas", ideaId), {
+    feedback,
+    status: "regenerated",
+    updatedAt: new Date().toISOString(),
+  });
+
+  // n8n webhook'u çağır (henüz kurulmadıysa sessizce devam et)
+  try {
+    await fetch("/api/regenerate-idea", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ideaId, feedback }),
+    });
+  } catch {
+    // n8n akışı henüz hazır olmayabilir
+  }
+
+  const snap = await getDoc(doc(db, "contentIdeas", ideaId));
   return {
     success: true,
-    idea: {
-      id: "idea-new-" + Date.now(),
-      weeklyFlowId: "flow-1",
-      suggestedDate: new Date().toISOString().split("T")[0],
-      suggestedTime: "12:00",
-      platform: "Instagram",
-      contentFormat: "Post",
-      title: "Yeniden Oluşturulan İçerik Fikri",
-      description: "Feedback'inize göre yeniden oluşturulmuş içerik fikri.",
-      trendSource: "Social Trend",
-      trendKeyword: "yeni trend",
-      status: "regenerated",
-      feedback,
-      createdAt: new Date().toISOString(),
-    },
+    idea: { id: snap.id, ...snap.data() } as ContentIdea,
   };
 }
 
