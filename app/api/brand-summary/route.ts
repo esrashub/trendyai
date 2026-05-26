@@ -1,5 +1,7 @@
-import { generateText } from "ai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
 export async function POST(request: NextRequest) {
   try {
@@ -40,12 +42,11 @@ Aşağıdaki formatta, her başlık için 1-2 cümle yaz. Tam olarak bu formatı
 
 **Görsel Yön:** [görsel stil ve renkler]`;
 
-    const { text } = await generateText({
-      model: "google/gemini-2.0-flash",
-      prompt,
-      maxOutputTokens: 1000,
-      temperature: 0.7,
-    });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    const text = response.text();
 
     return NextResponse.json({ success: true, summary: text });
   } catch (err: unknown) {
