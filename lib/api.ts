@@ -300,34 +300,106 @@ export async function getPlatformAccounts(): Promise<PlatformAccount[]> {
 }
 
 /**
- * Connect platform (simulates OAuth)
- * Future endpoint: GET /api/oauth/:platform/start
- * Future callback: GET /api/oauth/:platform/callback
- * Database relation: This creates/updates platform_accounts table.
+ * Save connected platform to Firestore
+ * Writes to Firestore: connectedPlatforms/{uid}/platforms/{platformId}
  */
-export async function connectPlatform(platform: string): Promise<{ success: boolean; account: PlatformAccount }> {
-  await delay(1500);
-  const account = mockPlatformAccounts.find((p) => p.platform === platform);
-  if (account) {
-    return {
-      success: true,
-      account: {
-        ...account,
-        status: "connected",
-        connectedAt: new Date().toISOString(),
-      },
-    };
-  }
-  throw new Error("Platform bulunamadı");
+export async function saveConnectedPlatform(platformData: {
+  platform: string;
+  provider: string;
+  accountId: string;
+  accountName: string;
+  profilePicture?: string;
+  accessToken: string;
+  refreshToken?: string;
+  pageId?: string;
+  pageAccessToken?: string;
+  expiresAt?: string | null;
+}): Promise<{ success: boolean }> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("Kullanıcı girişi gerekli");
+
+  await setDoc(
+    doc(db, "connectedPlatforms", uid, "platforms", platformData.platform),
+    {
+      ...platformData,
+      status: "connected",
+      connectedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+  );
+
+  // Also update the parent doc to mark that platforms exist
+  await setDoc(
+    doc(db, "connectedPlatforms", uid),
+    { hasConnections: true, updatedAt: new Date().toISOString() },
+    { merge: true }
+  );
+
+  return { success: true };
 }
 
 /**
- * Disconnect platform
- * Future endpoint: DELETE /api/platform-accounts/:id
+ * Get all connected platforms for current user
+ * Reads from Firestore: connectedPlatforms/{uid}/platforms
+ */
+export async function getConnectedPlatforms(): Promise<PlatformAccount[]> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) return [];
+
+  const { getDocs, collection } = await import("firebase/firestore");
+  const snapshot = await getDocs(collection(db, "connectedPlatforms", uid, "platforms"));
+  
+  return snapshot.docs.map((doc) => ({
+    id: doc.id,
+    platform: doc.data().platform,
+    platformName: doc.data().accountName,
+    username: doc.data().accountName,
+    profileImage: doc.data().profilePicture,
+    status: doc.data().status,
+    connectedAt: doc.data().connectedAt,
+    followers: doc.data().followers || 0,
+  })) as PlatformAccount[];
+}
+
+/**
+ * Disconnect platform - removes from Firestore
+ * Deletes from Firestore: connectedPlatforms/{uid}/platforms/{platformId}
  */
 export async function disconnectPlatform(platformId: string): Promise<{ success: boolean }> {
-  await delay(500);
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("Kullanıcı girişi gerekli");
+
+  const { deleteDoc } = await import("firebase/firestore");
+  await deleteDoc(doc(db, "connectedPlatforms", uid, "platforms", platformId));
+  
   return { success: true };
+}
+
+/**
+ * Get platform access token for posting
+ * Reads from Firestore: connectedPlatforms/{uid}/platforms/{platformId}
+ */
+export async function getPlatformCredentials(platformId: string): Promise<{
+  accessToken: string;
+  refreshToken?: string;
+  pageId?: string;
+  pageAccessToken?: string;
+  accountId: string;
+} | null> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) return null;
+
+  const snap = await getDoc(doc(db, "connectedPlatforms", uid, "platforms", platformId));
+  if (!snap.exists()) return null;
+
+  const data = snap.data();
+  return {
+    accessToken: data.accessToken,
+    refreshToken: data.refreshToken,
+    pageId: data.pageId,
+    pageAccessToken: data.pageAccessToken,
+    accountId: data.accountId,
+  };
 }
 
 // ==========================================

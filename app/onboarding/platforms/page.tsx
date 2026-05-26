@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Loader2,
   ArrowRight,
@@ -11,6 +11,8 @@ import {
   Facebook,
   Link2,
   AlertCircle,
+  CheckCircle2,
+  ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { OnboardingStepper } from "@/components/layout/onboarding-stepper";
-import { connectPlatform } from "@/lib/api";
+import { saveConnectedPlatform, getConnectedPlatforms, disconnectPlatform } from "@/lib/api";
 
 type PlatformStatus = "disconnected" | "connecting" | "connected" | "expired";
 
@@ -29,6 +31,7 @@ interface Platform {
   description: string;
   status: PlatformStatus;
   accountName?: string;
+  profilePicture?: string;
 }
 
 const XIcon = () => (
@@ -39,14 +42,16 @@ const XIcon = () => (
 
 export default function PlatformsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingData, setIsLoadingData] = useState(true);
   const [platforms, setPlatforms] = useState<Platform[]>([
     {
       id: "instagram",
       name: "Instagram",
       icon: <Instagram className="h-6 w-6" />,
       description:
-        "Instagram hesabınızı bağlayarak post, story ve reel içerikleri paylaşın.",
+        "Instagram Business hesabınızı bağlayarak post, story ve reel içerikleri paylaşın.",
       status: "disconnected",
     },
     {
@@ -58,7 +63,7 @@ export default function PlatformsPage() {
       status: "disconnected",
     },
     {
-      id: "x",
+      id: "twitter",
       name: "X (Twitter)",
       icon: <XIcon />,
       description:
@@ -75,46 +80,116 @@ export default function PlatformsPage() {
     },
   ]);
 
-  const handleConnect = async (platformId: string) => {
+  // Load existing connections on mount
+  useEffect(() => {
+    const loadConnections = async () => {
+      try {
+        const connections = await getConnectedPlatforms();
+        if (connections.length > 0) {
+          setPlatforms((prev) =>
+            prev.map((p) => {
+              const connection = connections.find((c) => c.platform === p.id);
+              if (connection) {
+                return {
+                  ...p,
+                  status: "connected" as PlatformStatus,
+                  accountName: connection.username || connection.platformName,
+                  profilePicture: connection.profileImage,
+                };
+              }
+              return p;
+            })
+          );
+        }
+      } catch (error) {
+        console.error("Failed to load connections:", error);
+      } finally {
+        setIsLoadingData(false);
+      }
+    };
+    loadConnections();
+  }, []);
+
+  // Handle OAuth callback
+  useEffect(() => {
+    const connected = searchParams.get("connected");
+    const data = searchParams.get("data");
+    const error = searchParams.get("error");
+
+    if (error) {
+      const errorMessages: Record<string, string> = {
+        invalid_state: "Güvenlik doğrulaması başarısız. Lütfen tekrar deneyin.",
+        no_code: "Yetkilendirme kodu alınamadı.",
+        token_exchange_failed: "Token alınamadı. Lütfen tekrar deneyin.",
+        no_instagram_business: "Instagram Business hesabı bulunamadı. Lütfen bir Facebook sayfasına bağlı Instagram Business hesabınız olduğundan emin olun.",
+        no_facebook_page: "Facebook sayfası bulunamadı. Lütfen yönetici olduğunuz bir Facebook sayfası oluşturun.",
+        access_denied: "Erişim reddedildi. Lütfen izinleri onaylayın.",
+      };
+      toast.error(errorMessages[error] || `Bağlantı hatası: ${error}`);
+      // Clear URL params
+      router.replace("/onboarding/platforms");
+      return;
+    }
+
+    if (connected && data) {
+      try {
+        const connectionData = JSON.parse(atob(data));
+        
+        // Save to Firestore
+        saveConnectedPlatform(connectionData)
+          .then(() => {
+            setPlatforms((prev) =>
+              prev.map((p) =>
+                p.id === connected
+                  ? {
+                      ...p,
+                      status: "connected" as PlatformStatus,
+                      accountName: connectionData.accountName,
+                      profilePicture: connectionData.profilePicture,
+                    }
+                  : p
+              )
+            );
+            toast.success(`${connectionData.accountName} başarıyla bağlandı!`);
+          })
+          .catch((err) => {
+            console.error("Failed to save connection:", err);
+            toast.error("Bağlantı kaydedilemedi");
+          });
+
+        // Clear URL params
+        router.replace("/onboarding/platforms");
+      } catch (err) {
+        console.error("Failed to parse connection data:", err);
+      }
+    }
+  }, [searchParams, router]);
+
+  const handleConnect = (platformId: string) => {
     setPlatforms((prev) =>
       prev.map((p) =>
         p.id === platformId ? { ...p, status: "connecting" as PlatformStatus } : p
       )
     );
 
+    // Redirect to OAuth
+    window.location.href = `/api/auth/connect?platform=${platformId}`;
+  };
+
+  const handleDisconnect = async (platformId: string) => {
     try {
-      const result = await connectPlatform(platformId);
+      await disconnectPlatform(platformId);
       setPlatforms((prev) =>
         prev.map((p) =>
           p.id === platformId
-            ? {
-                ...p,
-                status: "connected" as PlatformStatus,
-                accountName: result.account.accountName,
-              }
+            ? { ...p, status: "disconnected" as PlatformStatus, accountName: undefined, profilePicture: undefined }
             : p
         )
       );
-      toast.success(`${platformId} başarıyla bağlandı!`);
+      toast.success("Platform bağlantısı kaldırıldı");
     } catch {
-      setPlatforms((prev) =>
-        prev.map((p) =>
-          p.id === platformId ? { ...p, status: "disconnected" as PlatformStatus } : p
-        )
-      );
-      toast.error("Bağlantı başarısız");
+      toast.error("Bağlantı kaldırılamadı");
     }
-  };
-
-  const handleDisconnect = (platformId: string) => {
-    setPlatforms((prev) =>
-      prev.map((p) =>
-        p.id === platformId
-          ? { ...p, status: "disconnected" as PlatformStatus, accountName: undefined }
-          : p
-      )
-    );
-    toast.success("Platform bağlantısı kaldırıldı");
   };
 
   const getStatusBadge = (status: PlatformStatus) => {
@@ -122,6 +197,7 @@ export default function PlatformsPage() {
       case "connected":
         return (
           <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+            <CheckCircle2 className="mr-1 h-3 w-3" />
             Bağlandı
           </Badge>
         );
@@ -148,6 +224,14 @@ export default function PlatformsPage() {
     router.push("/onboarding/content-preferences");
   };
 
+  if (isLoadingData) {
+    return (
+      <div className="flex min-h-[400px] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-6xl">
       {/* Stepper */}
@@ -169,8 +253,7 @@ export default function PlatformsPage() {
               <Alert className="border-primary/20 bg-primary/5">
                 <AlertCircle className="h-4 w-4 text-primary" />
                 <AlertDescription className="text-sm">
-                  Gerçek platform bağlantıları OAuth 2.0 ile yapılacak, access
-                  token bilgileri backend tarafında şifreli olarak saklanacaktır.
+                  Platformları bağlamak için OAuth 2.0 kullanılmaktadır. Bağla butonuna tıkladığınızda ilgili platformun yetkilendirme sayfasına yönlendirileceksiniz.
                 </AlertDescription>
               </Alert>
 
@@ -179,9 +262,17 @@ export default function PlatformsPage() {
                   <Card key={platform.id} className="border border-border/50">
                     <CardContent className="flex items-center justify-between p-4">
                       <div className="flex items-center gap-4">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-secondary text-foreground">
-                          {platform.icon}
-                        </div>
+                        {platform.status === "connected" && platform.profilePicture ? (
+                          <img
+                            src={platform.profilePicture}
+                            alt={platform.accountName}
+                            className="h-12 w-12 rounded-lg object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-secondary text-foreground">
+                            {platform.icon}
+                          </div>
+                        )}
                         <div>
                           <div className="flex items-center gap-2">
                             <h3 className="font-semibold">{platform.name}</h3>
@@ -189,7 +280,7 @@ export default function PlatformsPage() {
                           </div>
                           <p className="mt-1 text-sm text-muted-foreground">
                             {platform.status === "connected" && platform.accountName
-                              ? platform.accountName
+                              ? `@${platform.accountName}`
                               : platform.description}
                           </p>
                         </div>
@@ -211,8 +302,10 @@ export default function PlatformsPage() {
                           >
                             {platform.status === "connecting" ? (
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : null}
-                            {platform.name} Bağla
+                            ) : (
+                              <ExternalLink className="mr-2 h-4 w-4" />
+                            )}
+                            Bağla
                           </Button>
                         )}
                       </div>
@@ -285,6 +378,13 @@ export default function PlatformsPage() {
                   En az bir platform bağlamanızı öneririz.
                 </p>
               )}
+
+              <Alert className="border-amber-200 bg-amber-50">
+                <AlertCircle className="h-4 w-4 text-amber-600" />
+                <AlertDescription className="text-xs text-amber-700">
+                  Platform API&apos;ları için geliştirici hesapları ve uygulama onayları gereklidir.
+                </AlertDescription>
+              </Alert>
             </CardContent>
           </Card>
         </div>
