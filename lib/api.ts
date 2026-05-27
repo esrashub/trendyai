@@ -40,6 +40,7 @@ import {
 } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
+import { fixContentIdeaText } from "@/lib/text-fix";
 
 /**
  * Firebase Auth state'i hazır olana kadar bekler ve uid döner.
@@ -599,9 +600,11 @@ export async function getContentIdeas(): Promise<ContentIdea[]> {
     where("userId", "==", uid)
   );
   const snapshot = await getDocs(q);
-  const ideas = snapshot.docs.map(
-    (d) => ({ id: d.id, ...d.data() } as ContentIdea)
-  );
+  const ideas = snapshot.docs.map((d) => {
+    const raw = { id: d.id, ...d.data() } as ContentIdea;
+    // n8n task runner Türkçe karakterleri bozuyor; Firestore'dan okurken düzelt
+    return fixContentIdeaText(raw) as ContentIdea;
+  });
   // createdAt'a göre azalan sıra (index gerekmeden client-side)
   return ideas.sort(
     (a, b) =>
