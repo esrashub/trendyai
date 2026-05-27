@@ -1,43 +1,81 @@
 /**
  * n8n task runner, UTF-8 Türkçe karakterleri (ş, ı, ğ, ü, ö, ç vb.)
- * Big5 / CJK encoding olarak yanlış yorumlayıp Firestore'a bozuk kaydeder.
+ * GBK (Simplified Chinese) encoding olarak yanlış yorumlayıp Firestore'a bozuk kaydeder.
  *
- * Bozulma örneği: ı → 謀, ö → 枚, ş → 腹
- * Sebebi: UTF-8 baytları (ör. 0xC4 0xB1 for ı) Big5 olarak okunuyor → Çince karakter çıkıyor.
+ * Test sonuçları (iconv-lite ile doğrulandı):
+ *   ğ → 臒  ü → 眉  ş → 艧  ı → 谋  ö → 枚  ç → 莽
+ *   Ğ → 臑  Ü → 脺  Ş → 艦  İ → 陌  Ö → 脰  Ç → 脟
  *
  * Düzeltme yöntemi:
- *   1. Bozuk metni Big5 olarak encode et → orijinal UTF-8 baytlarını geri al
- *   2. O baytları UTF-8 olarak decode et → doğru Türkçe metin
+ *   1. Her GBK karakterini GBK olarak encode et → orijinal UTF-8 baytlarını geri al
+ *   2. O baytları UTF-8 olarak decode et → doğru Türkçe karakter
  */
 
 import iconv from "iconv-lite";
 
+// GBK bozulmasından üretilen Türkçe karakter setinin Unicode aralığı:
+// Tüm bozuk karakterler U+2E80–U+9FFF aralığında (CJK Unified Ideographs)
+const CJK_REGEX = /[⺀-鿿豈-﫿]/;
+
+// Kesin bilinen GBK → Türkçe eşleşme tablosu (test ile doğrulandı)
+const GBK_TO_TURKISH: Record<string, string> = {
+  "臒": "ğ", // 臒
+  "眉": "ü", // 眉
+  "艧": "ş", // 艧
+  "谋": "ı", // 谋
+  "枚": "ö", // 枚
+  "莽": "ç", // 莽
+  "臑": "Ğ", // 臑
+  "脺": "Ü", // 脺
+  "艦": "Ş", // 艦
+  "陌": "İ", // 陌
+  "脰": "Ö", // 脰
+  "脟": "Ç", // 脟
+};
+
 /**
- * Tek bir string alanındaki bozukluğu düzeltir.
+ * Tek bir string alanındaki GBK bozukluğunu düzeltir.
  * CJK karakteri içermiyorsa dokunmaz (güvenli fallback).
+ *
+ * Yöntem: Önce kesin mapping tablosuna bak, bulamazsa GBK encode/decode dene.
  */
 export function fixGarbledText(text: string | undefined | null): string {
   if (!text || typeof text !== "string") return text ?? "";
 
-  // CJK Unicode aralığı: 0x2E80–0x9FFF, 0xF900–0xFAFF
-  // Bu karakterler yoksa metin zaten doğru → olduğu gibi döndür
-  if (!/[⺀-鿿豈-﫿]/.test(text)) return text;
+  // CJK karakter yoksa zaten doğru → hızlı çıkış
+  if (!CJK_REGEX.test(text)) return text;
 
-  try {
-    // Bozuk metni Big5 olarak encode et → orijinal UTF-8 byte dizisi
-    const bytes = iconv.encode(text, "big5");
-    // O baytları UTF-8 olarak decode et → doğru Türkçe
-    const decoded = iconv.decode(bytes, "utf8");
+  // Karakter karakter işle: her CJK char için GBK → UTF-8 dönüşümü dene
+  let result = "";
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0;
 
-    // Doğrulama: Türkçe karakter çıktıysa başarılı
-    if (/[ğüşıöçĞÜŞİÖÇ]/.test(decoded)) return decoded;
-    // Artık CJK yoksa da başarılı sayılır
-    if (!/[⺀-鿿豈-﫿]/.test(decoded)) return decoded;
-  } catch {
-    // iconv hatası → orijinali döndür
+    if (cp >= 0x2E80 && cp <= 0x9FFF) {
+      // 1. Önce kesin tablodan bak
+      const known = GBK_TO_TURKISH[ch];
+      if (known) {
+        result += known;
+        continue;
+      }
+
+      // 2. Kesin tabloda yoksa GBK encode → UTF-8 decode dene
+      try {
+        const bytes = iconv.encode(ch, "gbk");
+        const decoded = iconv.decode(bytes, "utf8");
+        // Sonuç Türkçe karakter içeriyorsa başarılı
+        if (/[ğüşıöçĞÜŞİÖÇ]/.test(decoded)) {
+          result += decoded;
+          continue;
+        }
+      } catch {
+        // encode/decode hatası → orijinal karakteri koru
+      }
+    }
+
+    result += ch;
   }
 
-  return text; // Son çare: bozuk haliyle döndür
+  return result;
 }
 
 /**
@@ -55,6 +93,8 @@ export function fixContentIdeaText<T>(idea: T): T {
     "platform",
     "contentFormat",
     "trendSource",
+    "suggestedTime",
+    "suggestedDate",
   ];
 
   const fixed = { ...(idea as object) } as Record<string, unknown>;
