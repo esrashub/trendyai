@@ -38,8 +38,15 @@ export const oauthConfig = {
   },
 };
 
+export type OAuthProvider = "meta" | "linkedin" | "twitter";
+
 // Platform display info
-export const platformInfo = {
+export const platformInfo: Record<string, {
+  id: string;
+  name: string;
+  color: string;
+  provider: OAuthProvider;
+}> = {
   instagram: {
     id: "instagram",
     name: "Instagram",
@@ -67,4 +74,3 @@ export const platformInfo = {
 };
 
 export type PlatformId = keyof typeof platformInfo;
-export type OAuthProvider = "meta" | "linkedin" | "twitter";

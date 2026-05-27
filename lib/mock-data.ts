@@ -235,6 +235,11 @@ export const mockContentIdeas: ContentIdea[] = [
 export const mockGeneratedContent: GeneratedContent = {
   id: "content-1",
   contentIdeaId: "idea-1",
+  userId: "mock-user-id",
+  weekId: "2026-W21",
+  niche: "Beslenme ve Diyetetik",
+  platform: "instagram",
+  contentType: "carousel",
   text: {
     hook: "Metabolizmanızı hızlandırmak mı istiyorsunuz?",
     caption:
@@ -248,17 +253,22 @@ export const mockGeneratedContent: GeneratedContent = {
       "#kiloverme",
       "#sağlıklıyaşam",
     ],
+    contentNotes: "5 slaytlık carousel önerisi; her slayt için kısa başlık + 1-2 cümle açıklama.",
   },
   visual: {
     prompt:
       "Modern, clean infographic showing 5 metabolism boosting foods: green tea, pepper, ginger, protein sources, and water. Green and white color scheme, minimalist design, professional nutrition content style.",
-    designStyle: "Modern",
+    designStyle: "Modern minimalist",
+    aspectRatio: "4:5",
     imageUrl: "/placeholder-content.jpg",
     canvaUrl: "https://canva.com/design/placeholder",
+    provider: "openai",
   },
   textApproved: false,
   visualApproved: false,
+  status: "text_generated",
   createdAt: "2026-05-26T10:00:00Z",
+  updatedAt: "2026-05-26T10:00:00Z",
 };
 
 export const mockScheduledPosts: ScheduledPost[] = [
