@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   Loader2,
@@ -12,6 +12,7 @@ import {
   Image as ImageIcon,
   Type,
   Sparkles,
+  AlertCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,7 +20,11 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { ScheduleModal } from "@/components/modals/schedule-modal";
+import { FeedbackModal } from "@/components/modals/feedback-modal";
 import {
+  getContentIdeaById,
+  getGeneratedContent,
+  subscribeToGeneratedContent,
   generateContent,
   regenerateText,
   regenerateVisual,
@@ -27,9 +32,22 @@ import {
   approveVisual,
   scheduleContent,
 } from "@/lib/api";
-import { mockContentIdeas, mockGeneratedContent } from "@/lib/mock-data";
 import type { ContentIdea, GeneratedContent } from "@/types";
 
+/**
+ * İçerik üretimi sayfası — Strateji 1: fire-and-forget + Firestore listener.
+ *
+ * Akış:
+ *  1. ideaId ile contentIdeas/{ideaId} okunur
+ *  2. generatedContents/{contentId} kontrol edilir (cache)
+ *     - Varsa direkt göster
+ *     - Yoksa generateContent() çağır (n8n tetiklenir)
+ *  3. onSnapshot ile generatedContents/{contentId} dinlenir
+ *     - n8n metni yazdığında UI güncellenir (status: text_generated)
+ *     - n8n görseli yazdığında UI güncellenir (status: visual_generated)
+ *  4. Onaylar Firestore'a direkt yazılır
+ *  5. Programlama modalı schedule-content workflow'unu çağırır
+ */
 export default function ContentCreatePage() {
   const params = useParams();
   const router = useRouter();
@@ -37,87 +55,205 @@ export default function ContentCreatePage() {
 
   const [idea, setIdea] = useState<ContentIdea | null>(null);
   const [content, setContent] = useState<GeneratedContent | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingIdea, setIsLoadingIdea] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationStep, setGenerationStep] = useState<
+    "idle" | "starting" | "text" | "visual" | "done"
+  >("idle");
   const [isRegeneratingText, setIsRegeneratingText] = useState(false);
   const [isRegeneratingVisual, setIsRegeneratingVisual] = useState(false);
-  const [textApproved, setTextApproved] = useState(false);
-  const [visualApproved, setVisualApproved] = useState(false);
+  const [isApproving, setIsApproving] = useState<"text" | "visual" | null>(
+    null
+  );
   const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Listener referansı — cleanup için
+  const unsubRef = useRef<(() => void) | null>(null);
+
+  // İlk yükleme: idea oku, mevcut içerik var mı bak, yoksa tetikle
   useEffect(() => {
-    const loadData = async () => {
-      // Find the idea from mock data
-      const foundIdea = mockContentIdeas.find((i) => i.id === ideaId);
-      if (foundIdea) {
-        setIdea(foundIdea);
-        // Simulate content generation
-        setIsGenerating(true);
-        try {
-          const result = await generateContent(ideaId);
-          setContent(result.content);
-        } catch {
-          // Use mock content as fallback
-          setContent(mockGeneratedContent);
-        } finally {
-          setIsGenerating(false);
+    let cancelled = false;
+
+    const loadIdeaAndContent = async () => {
+      try {
+        // 1. ContentIdea'yı Firestore'dan oku
+        const fetchedIdea = await getContentIdeaById(ideaId);
+        if (cancelled) return;
+
+        if (!fetchedIdea) {
+          setIsLoadingIdea(false);
+          return;
+        }
+        setIdea(fetchedIdea);
+        setIsLoadingIdea(false);
+
+        // 2. Mevcut generatedContent var mı kontrol et (cache)
+        const existing = await getGeneratedContent(ideaId);
+        if (cancelled) return;
+
+        if (existing) {
+          setContent(existing);
+          setGenerationStep(
+            existing.visual?.imageUrl ? "done" : "visual"
+          );
+          // Hâlâ değişiklik gelebilir (örn. görsel henüz üretilmemişse), listener kur
+          setupListener(existing.id);
+        } else {
+          // 3. Yoksa içerik üretimini başlat
+          await startGeneration();
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Bilinmeyen hata";
+        console.error("[content-create] loadIdeaAndContent:", msg);
+        if (!cancelled) {
+          setErrorMessage(msg);
+          setIsLoadingIdea(false);
         }
       }
-      setIsLoading(false);
     };
 
-    loadData();
+    const startGeneration = async () => {
+      try {
+        setIsGenerating(true);
+        setGenerationStep("starting");
+        const result = await generateContent(ideaId);
+        if (cancelled) return;
+
+        // n8n tetiklendi, listener'ı kur → Firestore'dan gelecek
+        setGenerationStep("text");
+        setupListener(result.contentId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "İçerik üretilemedi";
+        console.error("[content-create] startGeneration:", msg);
+        if (!cancelled) {
+          setErrorMessage(msg);
+          setIsGenerating(false);
+          toast.error(msg);
+        }
+      }
+    };
+
+    const setupListener = (contentId: string) => {
+      // Önceki listener varsa temizle
+      if (unsubRef.current) {
+        unsubRef.current();
+      }
+      unsubRef.current = subscribeToGeneratedContent(contentId, (c) => {
+        if (cancelled) return;
+        if (!c) return; // Henüz oluşmamış, beklemeye devam
+
+        setContent(c);
+
+        // Adımı status'a göre güncelle
+        if (c.visual?.imageUrl) {
+          setGenerationStep("done");
+          setIsGenerating(false);
+          setIsRegeneratingText(false);
+          setIsRegeneratingVisual(false);
+        } else if (c.text?.hook) {
+          setGenerationStep("visual");
+          setIsRegeneratingText(false);
+          // İlk kez metin geldiyse otomatik görsel üretimi tetiklenmez
+          // Kullanıcı "Onayla" sonrası görsel için ayrı buton kullanmalı
+          // (n8n workflow'u textApproved kontrolü yapıyor)
+        }
+      });
+    };
+
+    loadIdeaAndContent();
+
+    return () => {
+      cancelled = true;
+      if (unsubRef.current) {
+        unsubRef.current();
+        unsubRef.current = null;
+      }
+    };
   }, [ideaId]);
 
-  const handleRegenerateText = async () => {
+  const handleRegenerateText = async (feedback: string) => {
     if (!content) return;
     setIsRegeneratingText(true);
-    setTextApproved(false);
+    setErrorMessage(null);
     try {
-      const result = await regenerateText(content.id);
-      setContent(result.content);
-      toast.success("Metin yeniden oluşturuldu!");
-    } catch {
-      toast.error("Metin yeniden oluşturulamadı");
-    } finally {
+      await regenerateText(content.id, feedback);
+      toast.success("Metin yeniden oluşturuluyor...");
+      // Listener zaten güncel veriyi yakalayacak
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Metin yeniden oluşturulamadı";
+      toast.error(msg);
       setIsRegeneratingText(false);
     }
   };
 
   const handleRegenerateVisual = async () => {
     if (!content) return;
+    // n8n textApproved kontrolü yapıyor; emin olmak için frontend de kontrol etsin
+    if (!content.textApproved) {
+      toast.error(
+        "Görsel üretimi için önce metnin onaylanması gerekiyor"
+      );
+      return;
+    }
     setIsRegeneratingVisual(true);
-    setVisualApproved(false);
+    setErrorMessage(null);
     try {
-      const result = await regenerateVisual(content.id);
-      setContent(result.content);
-      toast.success("Görsel yeniden oluşturuldu!");
-    } catch {
-      toast.error("Görsel yeniden oluşturulamadı");
-    } finally {
+      await regenerateVisual(content.id);
+      toast.success("Görsel yeniden oluşturuluyor (30-60 sn sürebilir)...");
+      // Listener güncellemeyi yakalayacak
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Görsel üretilemedi";
+      toast.error(msg);
       setIsRegeneratingVisual(false);
     }
   };
 
   const handleApproveText = async () => {
     if (!content) return;
+    setIsApproving("text");
     try {
       await approveText(content.id);
-      setTextApproved(true);
-      toast.success("Metin onaylandı!");
-    } catch {
-      toast.error("Metin onaylanamadı");
+      toast.success("Metin onaylandı! Görsel üretimini başlatabilirsiniz.");
+      // Listener content.textApproved = true alacak
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Metin onaylanamadı";
+      toast.error(msg);
+    } finally {
+      setIsApproving(null);
     }
   };
 
   const handleApproveVisual = async () => {
     if (!content) return;
+    setIsApproving("visual");
     try {
       await approveVisual(content.id);
-      setVisualApproved(true);
       toast.success("Görsel onaylandı!");
-    } catch {
-      toast.error("Görsel onaylanamadı");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Görsel onaylanamadı";
+      toast.error(msg);
+    } finally {
+      setIsApproving(null);
+    }
+  };
+
+  const handleGenerateVisualFirstTime = async () => {
+    if (!content) return;
+    if (!content.textApproved) {
+      toast.error("Önce metni onaylamalısınız");
+      return;
+    }
+    setIsRegeneratingVisual(true);
+    try {
+      await regenerateVisual(content.id);
+      toast.success("Görsel oluşturuluyor (30-60 sn)...");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Görsel üretilemedi";
+      toast.error(msg);
+      setIsRegeneratingVisual(false);
     }
   };
 
@@ -137,18 +273,26 @@ export default function ContentCreatePage() {
     }
   };
 
-  if (isLoading) {
+  // Yüklenme — idea henüz okunmadı
+  if (isLoadingIdea) {
     return (
-      <div className="flex h-[50vh] items-center justify-center">
+      <div className="flex h-[50vh] flex-col items-center justify-center gap-3">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">
+          İçerik fikri yükleniyor...
+        </p>
       </div>
     );
   }
 
+  // Fikir bulunamadı
   if (!idea) {
     return (
       <div className="flex flex-col items-center justify-center py-16">
-        <h2 className="mb-2 text-xl font-semibold">İçerik fikri bulunamadı</h2>
+        <AlertCircle className="mb-4 h-12 w-12 text-destructive" />
+        <h2 className="mb-2 text-xl font-semibold">
+          İçerik fikri bulunamadı
+        </h2>
         <p className="mb-4 text-muted-foreground">
           Bu ID&apos;ye sahip bir içerik fikri mevcut değil.
         </p>
@@ -159,6 +303,11 @@ export default function ContentCreatePage() {
       </div>
     );
   }
+
+  const isTextReady = !!content?.text?.hook;
+  const isVisualReady = !!content?.visual?.imageUrl;
+  const textApproved = content?.textApproved === true;
+  const visualApproved = content?.visualApproved === true;
 
   return (
     <div className="space-y-6">
@@ -174,7 +323,9 @@ export default function ContentCreatePage() {
             <ArrowLeft className="mr-2 h-4 w-4" />
             Geri
           </Button>
-          <h1 className="text-2xl font-bold text-foreground">İçerik Oluşturma</h1>
+          <h1 className="text-2xl font-bold text-foreground">
+            İçerik Oluşturma
+          </h1>
           <p className="text-muted-foreground">
             Onaylanan fikir için metin ve görsel içerik oluşturun
           </p>
@@ -215,17 +366,53 @@ export default function ContentCreatePage() {
         </CardContent>
       </Card>
 
-      {isGenerating ? (
+      {/* Hata mesajı */}
+      {errorMessage && (
+        <Card className="border-destructive/30 bg-destructive/5">
+          <CardContent className="flex items-center gap-3 p-4">
+            <AlertCircle className="h-5 w-5 text-destructive" />
+            <div className="flex-1">
+              <p className="font-medium text-destructive">Hata</p>
+              <p className="text-sm text-muted-foreground">{errorMessage}</p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => window.location.reload()}
+            >
+              Yeniden Dene
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Üretim aşaması ekranı */}
+      {(isGenerating || !isTextReady) && !errorMessage && (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
             <Loader2 className="mb-4 h-12 w-12 animate-spin text-primary" />
-            <h3 className="mb-2 text-lg font-semibold">İçerik Oluşturuluyor</h3>
-            <p className="text-sm text-muted-foreground">
-              AI içeriğinizi hazırlıyor, lütfen bekleyin...
+            <h3 className="mb-2 text-lg font-semibold">
+              {generationStep === "starting" && "İçerik üretimi başlatılıyor..."}
+              {generationStep === "text" && "Metin hazırlanıyor..."}
+              {generationStep === "visual" && "Hazır, metin geldi..."}
+              {generationStep === "done" && "Tamamlandı"}
+              {generationStep === "idle" && "Bekleniyor..."}
+            </h3>
+            <p className="max-w-md text-center text-sm text-muted-foreground">
+              AI içeriğinizi hazırlıyor. Bu işlem 30-60 saniye sürebilir.
+              Sayfayı kapatabilirsiniz; sonuçlar Firestore&apos;a kaydediliyor.
             </p>
+            <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+              <Badge variant="outline" className="font-mono">
+                status: {content?.status || generationStep}
+              </Badge>
+            </div>
           </CardContent>
         </Card>
-      ) : content ? (
+      )}
+
+      {/* Metin + Görsel kartları */}
+      {content && isTextReady && (
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Text Content */}
           <Card>
@@ -258,14 +445,16 @@ export default function ContentCreatePage() {
                   {content.text.caption}
                 </p>
               </div>
-              <div>
-                <p className="mb-1 text-sm font-medium text-muted-foreground">
-                  İçerik
-                </p>
-                <p className="whitespace-pre-wrap rounded-lg bg-secondary/50 p-3 text-foreground">
-                  {content.text.body}
-                </p>
-              </div>
+              {content.text.body && (
+                <div>
+                  <p className="mb-1 text-sm font-medium text-muted-foreground">
+                    İçerik
+                  </p>
+                  <p className="whitespace-pre-wrap rounded-lg bg-secondary/50 p-3 text-foreground">
+                    {content.text.body}
+                  </p>
+                </div>
+              )}
               <div>
                 <p className="mb-1 text-sm font-medium text-muted-foreground">
                   CTA
@@ -274,19 +463,21 @@ export default function ContentCreatePage() {
                   {content.text.cta}
                 </p>
               </div>
-              <div>
-                <p className="mb-2 text-sm font-medium text-muted-foreground">
-                  <Hash className="mr-1 inline h-4 w-4" />
-                  Hashtag&apos;ler
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {content.text.hashtags.map((tag) => (
-                    <Badge key={tag} variant="secondary">
-                      {tag}
-                    </Badge>
-                  ))}
+              {content.text.hashtags?.length > 0 && (
+                <div>
+                  <p className="mb-2 text-sm font-medium text-muted-foreground">
+                    <Hash className="mr-1 inline h-4 w-4" />
+                    Hashtag&apos;ler
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {content.text.hashtags.map((tag, i) => (
+                      <Badge key={`${tag}-${i}`} variant="secondary">
+                        {tag}
+                      </Badge>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <Separator />
 
@@ -294,22 +485,26 @@ export default function ContentCreatePage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleRegenerateText}
-                  disabled={isRegeneratingText}
+                  onClick={() => setShowFeedbackModal(true)}
+                  disabled={isRegeneratingText || textApproved}
                 >
                   {isRegeneratingText ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
                     <RefreshCw className="mr-2 h-4 w-4" />
                   )}
-                  Yeniden Oluştur
+                  Yeniden Oluştur (Feedback)
                 </Button>
                 <Button
                   size="sm"
                   onClick={handleApproveText}
-                  disabled={textApproved}
+                  disabled={textApproved || isApproving === "text"}
                 >
-                  <Check className="mr-2 h-4 w-4" />
+                  {isApproving === "text" ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Check className="mr-2 h-4 w-4" />
+                  )}
                   Metni Onayla
                 </Button>
               </div>
@@ -331,84 +526,124 @@ export default function ContentCreatePage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div>
-                <p className="mb-1 text-sm font-medium text-muted-foreground">
-                  Görsel Prompt
-                </p>
-                <p className="rounded-lg bg-secondary/50 p-3 text-sm text-foreground">
-                  {content.visual.prompt}
-                </p>
-              </div>
-              <div>
-                <p className="mb-1 text-sm font-medium text-muted-foreground">
-                  Tasarım Stili
-                </p>
-                <Badge variant="outline">{content.visual.designStyle}</Badge>
-              </div>
+              {/* Görsel önizleme */}
               <div>
                 <p className="mb-2 text-sm font-medium text-muted-foreground">
                   Görsel Önizleme
                 </p>
-                <div className="flex aspect-square items-center justify-center rounded-lg border border-dashed border-border bg-secondary/30">
-                  <div className="text-center">
-                    <ImageIcon className="mx-auto mb-2 h-12 w-12 text-muted-foreground/30" />
-                    <p className="text-sm text-muted-foreground">
-                      Görsel önizleme alanı
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      (Canva/AI görsel entegrasyonu eklenecek)
-                    </p>
+                {content.visual.imageUrl ? (
+                  <div className="relative overflow-hidden rounded-lg border">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={content.visual.imageUrl}
+                      alt={content.text.hook || "Üretilen görsel"}
+                      className="h-auto w-full object-cover"
+                    />
                   </div>
-                </div>
+                ) : isRegeneratingVisual ? (
+                  <div className="flex aspect-square items-center justify-center rounded-lg border border-dashed border-border bg-secondary/30">
+                    <div className="text-center">
+                      <Loader2 className="mx-auto mb-2 h-12 w-12 animate-spin text-primary" />
+                      <p className="text-sm font-medium">
+                        Görsel üretiliyor...
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        DALL-E ile yaratılıyor (30-60 sn)
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex aspect-square items-center justify-center rounded-lg border border-dashed border-border bg-secondary/30">
+                    <div className="text-center px-4">
+                      <ImageIcon className="mx-auto mb-2 h-12 w-12 text-muted-foreground/30" />
+                      <p className="text-sm text-muted-foreground">
+                        {textApproved
+                          ? 'Görsel henüz üretilmedi. "Görsel Oluştur" butonuna basın.'
+                          : "Görsel üretimi için önce metni onaylayın."}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
-              {content.visual.canvaUrl && (
+
+              {/* Prompt detayları (görsel hazırsa) */}
+              {content.visual.prompt && (
                 <div>
                   <p className="mb-1 text-sm font-medium text-muted-foreground">
-                    Canva Tasarım
+                    Görsel Prompt
                   </p>
-                  <a
-                    href={content.visual.canvaUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-primary hover:underline"
-                  >
-                    Canva&apos;da Düzenle
-                  </a>
+                  <p className="rounded-lg bg-secondary/50 p-3 text-xs text-foreground">
+                    {content.visual.prompt}
+                  </p>
+                </div>
+              )}
+              {content.visual.designStyle && (
+                <div>
+                  <p className="mb-1 text-sm font-medium text-muted-foreground">
+                    Tasarım Stili
+                  </p>
+                  <Badge variant="outline">{content.visual.designStyle}</Badge>
+                  {content.visual.aspectRatio && (
+                    <Badge variant="outline" className="ml-2">
+                      {content.visual.aspectRatio}
+                    </Badge>
+                  )}
                 </div>
               )}
 
               <Separator />
 
               <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleRegenerateVisual}
-                  disabled={isRegeneratingVisual}
-                >
-                  {isRegeneratingVisual ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="mr-2 h-4 w-4" />
-                  )}
-                  Yeniden Oluştur
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={handleApproveVisual}
-                  disabled={visualApproved}
-                >
-                  <Check className="mr-2 h-4 w-4" />
-                  Görseli Onayla
-                </Button>
+                {!isVisualReady ? (
+                  <Button
+                    size="sm"
+                    onClick={handleGenerateVisualFirstTime}
+                    disabled={!textApproved || isRegeneratingVisual}
+                  >
+                    {isRegeneratingVisual ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="mr-2 h-4 w-4" />
+                    )}
+                    Görsel Oluştur
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleRegenerateVisual}
+                      disabled={isRegeneratingVisual || visualApproved}
+                    >
+                      {isRegeneratingVisual ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                      )}
+                      Yeniden Oluştur
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={handleApproveVisual}
+                      disabled={visualApproved || isApproving === "visual"}
+                    >
+                      {isApproving === "visual" ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Check className="mr-2 h-4 w-4" />
+                      )}
+                      Görseli Onayla
+                    </Button>
+                  </>
+                )}
               </div>
             </CardContent>
           </Card>
         </div>
-      ) : null}
+      )}
 
       {/* Schedule Button */}
-      {content && (
+      {content && isTextReady && (
         <Card className="border-primary/20 bg-primary/5">
           <CardContent className="flex flex-col items-center justify-between gap-4 p-6 sm:flex-row">
             <div>
@@ -437,6 +672,14 @@ export default function ContentCreatePage() {
         onClose={() => setShowScheduleModal(false)}
         onSchedule={handleSchedule}
         defaultPlatform={idea.platform}
+      />
+
+      {/* Feedback Modal (regenerate text için) */}
+      <FeedbackModal
+        isOpen={showFeedbackModal}
+        onClose={() => setShowFeedbackModal(false)}
+        onSubmit={handleRegenerateText}
+        ideaTitle={idea.title}
       />
     </div>
   );

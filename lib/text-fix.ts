@@ -95,6 +95,8 @@ export function fixContentIdeaText<T>(idea: T): T {
     "trendSource",
     "suggestedTime",
     "suggestedDate",
+    "trendTopic",
+    "targetAudience",
   ];
 
   const fixed = { ...(idea as object) } as Record<string, unknown>;
@@ -103,5 +105,67 @@ export function fixContentIdeaText<T>(idea: T): T {
       fixed[field] = fixGarbledText(fixed[field] as string);
     }
   }
+  // hashtags array içindeki stringleri de düzelt
+  if (Array.isArray(fixed.hashtags)) {
+    fixed.hashtags = (fixed.hashtags as unknown[]).map((tag) =>
+      typeof tag === "string" ? fixGarbledText(tag) : tag
+    );
+  }
+  return fixed as unknown as T;
+}
+
+/**
+ * GeneratedContent nesnesindeki tüm metin alanlarını düzeltir.
+ * Hem nested (text.hook, visual.prompt) hem flat alanları kapsar.
+ *
+ * @param content - GeneratedContent veya benzeri yapı
+ */
+export function fixGeneratedContentText<T>(content: T): T {
+  const fixed = { ...(content as object) } as Record<string, unknown>;
+
+  // Üst seviye string alanlar
+  const ROOT_FIELDS = ["platform", "contentType", "niche"];
+  for (const field of ROOT_FIELDS) {
+    if (typeof fixed[field] === "string") {
+      fixed[field] = fixGarbledText(fixed[field] as string);
+    }
+  }
+
+  // text alt nesnesi
+  if (fixed.text && typeof fixed.text === "object") {
+    const text = { ...(fixed.text as Record<string, unknown>) };
+    const TEXT_FIELDS = ["hook", "caption", "body", "cta", "contentNotes"];
+    for (const field of TEXT_FIELDS) {
+      if (typeof text[field] === "string") {
+        text[field] = fixGarbledText(text[field] as string);
+      }
+    }
+    // hashtags array
+    if (Array.isArray(text.hashtags)) {
+      text.hashtags = (text.hashtags as unknown[]).map((t) =>
+        typeof t === "string" ? fixGarbledText(t) : t
+      );
+    }
+    // carouselSlides array
+    if (Array.isArray(text.carouselSlides)) {
+      text.carouselSlides = (text.carouselSlides as unknown[]).map((s) =>
+        typeof s === "string" ? fixGarbledText(s) : s
+      );
+    }
+    fixed.text = text;
+  }
+
+  // visual alt nesnesi
+  if (fixed.visual && typeof fixed.visual === "object") {
+    const visual = { ...(fixed.visual as Record<string, unknown>) };
+    const VISUAL_FIELDS = ["prompt", "negativePrompt", "designStyle"];
+    for (const field of VISUAL_FIELDS) {
+      if (typeof visual[field] === "string") {
+        visual[field] = fixGarbledText(visual[field] as string);
+      }
+    }
+    fixed.visual = visual;
+  }
+
   return fixed as unknown as T;
 }

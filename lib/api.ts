@@ -37,10 +37,16 @@ import {
   collection,
   query,
   where,
+  onSnapshot,
+  type Unsubscribe,
 } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { fixContentIdeaText } from "@/lib/text-fix";
+import { fixContentIdeaText, fixGeneratedContentText } from "@/lib/text-fix";
+import type {
+  GeneratedContentDoc,
+  GeneratedVisualDoc,
+} from "@/types";
 
 /**
  * Firebase Auth state'i hazır olana kadar bekler ve uid döner.
@@ -613,6 +619,23 @@ export async function getContentIdeas(): Promise<ContentIdea[]> {
 }
 
 /**
+ * Tek bir içerik fikrini Firestore'dan oku.
+ * `content-create/[id]` sayfası tarafından kullanılır.
+ *
+ * @param ideaId - contentIdeas/{ideaId} doküman ID
+ * @returns ContentIdea veya bulunamazsa null
+ */
+export async function getContentIdeaById(
+  ideaId: string
+): Promise<ContentIdea | null> {
+  const snap = await getDoc(doc(db, "contentIdeas", ideaId));
+  if (!snap.exists()) return null;
+
+  const raw = { id: snap.id, ...snap.data() } as ContentIdea;
+  return fixContentIdeaText(raw) as ContentIdea;
+}
+
+/**
  * Approve content idea — Firestore güncelleme
  */
 export async function approveContentIdea(
@@ -686,78 +709,330 @@ export async function regenerateContentIdeaWithFeedback(
 // ==========================================
 
 /**
- * Generate content for approved idea
- * Future endpoint: POST /api/content/:ideaId/generate
- * n8n webhook: POST /webhook/generate-content
- * Database relation: This creates generated_contents record.
+ * n8n workflow `Generate Content Text` deterministic ID üretir:
+ *   contentId = "content_" + ideaId
+ * Frontend bu sayede daha n8n tetiklenmeden listener'ı kurabilir.
  */
-export async function generateContent(ideaId: string): Promise<{ success: boolean; content: GeneratedContent }> {
-  await delay(2500);
-  return {
-    success: true,
-    content: {
-      ...mockGeneratedContent,
-      contentIdeaId: ideaId,
+function computeContentId(ideaId: string): string {
+  return `content_${ideaId}`;
+}
+
+/**
+ * Firestore'daki ham generatedContents/{contentId} dokümanını
+ * + ilgili generatedVisuals/{visualId}'i okuyup UI dostu nested
+ * `GeneratedContent` nesnesine dönüştürür.
+ *
+ * Türkçe karakter düzeltmesi (fixGeneratedContentText) otomatik uygulanır.
+ */
+async function mergeContentDocWithVisual(
+  contentId: string,
+  raw: GeneratedContentDoc
+): Promise<GeneratedContent> {
+  // hashtags, carouselSlides, reelScript Firestore'da JSON string olarak saklanır
+  let hashtags: string[] = [];
+  try {
+    hashtags = JSON.parse(raw.hashtags || "[]");
+  } catch {
+    hashtags = [];
+  }
+
+  let carouselSlides: string[] = [];
+  try {
+    carouselSlides = JSON.parse(raw.carouselSlides || "[]");
+  } catch {
+    carouselSlides = [];
+  }
+
+  let reelScript: Record<string, unknown> = {};
+  try {
+    reelScript = JSON.parse(raw.reelScript || "{}");
+  } catch {
+    reelScript = {};
+  }
+
+  // Visual bağlantısı varsa ayrı koleksiyondan oku
+  let visual: GeneratedContent["visual"] = {};
+  if (raw.generatedVisualRef) {
+    const visualId = raw.generatedVisualRef.replace(/^generatedVisuals\//, "");
+    try {
+      const vSnap = await getDoc(doc(db, "generatedVisuals", visualId));
+      if (vSnap.exists()) {
+        const v = vSnap.data() as GeneratedVisualDoc;
+        visual = {
+          visualId: v.visualId,
+          prompt: v.visualPrompt,
+          negativePrompt: v.negativePrompt,
+          designStyle: v.style,
+          aspectRatio: v.aspectRatio,
+          imageUrl: v.imageUrl,
+          provider: v.provider,
+        };
+      }
+    } catch (err) {
+      console.warn("[mergeContentDocWithVisual] visual okunamadı:", err);
+    }
+  }
+
+  const merged: GeneratedContent = {
+    id: contentId,
+    contentIdeaId: raw.ideaId,
+    userId: raw.userId,
+    weekId: raw.weekId,
+    niche: raw.niche,
+    platform: raw.platform || "",
+    contentType: raw.contentType || "",
+    text: {
+      hook: raw.hook || "",
+      caption: raw.caption || "",
+      body: raw.body || "",
+      cta: raw.cta || "",
+      hashtags,
+      carouselSlides: carouselSlides.length ? carouselSlides : undefined,
+      reelScript: Object.keys(reelScript).length ? reelScript : undefined,
+      contentNotes: raw.contentNotes,
     },
+    visual,
+    textApproved: raw.textApproved || false,
+    visualApproved: raw.visualApproved || false,
+    status: raw.status,
+    generatedVisualRef: raw.generatedVisualRef,
+    requestId: raw.requestId,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
+  };
+
+  return fixGeneratedContentText(merged);
+}
+
+/**
+ * Firestore'dan oluşturulmuş içeriği oku.
+ * Önce ideaId'den deterministic contentId hesaplar, sonra okur.
+ *
+ * @returns Mevcutsa GeneratedContent, yoksa null (henüz üretilmemiş)
+ */
+export async function getGeneratedContent(
+  ideaId: string
+): Promise<GeneratedContent | null> {
+  const contentId = computeContentId(ideaId);
+  const snap = await getDoc(doc(db, "generatedContents", contentId));
+  if (!snap.exists()) return null;
+
+  const raw = snap.data() as GeneratedContentDoc;
+  return mergeContentDocWithVisual(contentId, raw);
+}
+
+/**
+ * Firestore listener — generatedContents/{contentId} değişikliklerini izler.
+ * n8n workflow doc'u güncellediğinde callback çağrılır.
+ *
+ * Kullanım:
+ *   const unsub = subscribeToGeneratedContent(contentId, (content) => {
+ *     if (content) setContent(content);
+ *   });
+ *   // Cleanup: useEffect dönüşünde unsub()
+ */
+export function subscribeToGeneratedContent(
+  contentId: string,
+  callback: (content: GeneratedContent | null) => void
+): Unsubscribe {
+  return onSnapshot(
+    doc(db, "generatedContents", contentId),
+    async (snap) => {
+      if (!snap.exists()) {
+        callback(null);
+        return;
+      }
+      const raw = snap.data() as GeneratedContentDoc;
+      try {
+        const merged = await mergeContentDocWithVisual(contentId, raw);
+        callback(merged);
+      } catch (err) {
+        console.error(
+          "[subscribeToGeneratedContent] merge error:",
+          err
+        );
+        callback(null);
+      }
+    },
+    (err) => {
+      console.error(
+        "[subscribeToGeneratedContent] snapshot error:",
+        err
+      );
+      callback(null);
+    }
+  );
+}
+
+/**
+ * İçerik üretimini tetikle (fire-and-forget).
+ *
+ * Süreç:
+ *  1. /api/content/generate'i çağırır (Vercel kısa sürede döner)
+ *  2. n8n arka planda Gemini ile metni üretir
+ *  3. n8n Firestore'a yazar
+ *  4. Frontend `subscribeToGeneratedContent(contentId, ...)` ile sonucu bekler
+ *
+ * @returns Hesaplanan contentId — frontend listener kurmak için kullanır
+ */
+export async function generateContent(
+  ideaId: string
+): Promise<{ success: boolean; contentId: string; status: string }> {
+  const uid = await getUid();
+  if (!uid) throw new Error("Oturum açık değil");
+
+  const response = await fetch("/api/content/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: uid, ideaId }),
+  });
+
+  if (!response.ok) {
+    let msg = "İçerik üretimi başlatılamadı";
+    try {
+      const err = await response.json();
+      msg = err.error || msg;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+
+  const data = await response.json();
+  return {
+    success: data.success ?? true,
+    contentId: data.contentId ?? computeContentId(ideaId),
+    status: data.status ?? "generating",
   };
 }
 
 /**
- * Regenerate text content
- * Future endpoint: POST /api/content/:contentId/regenerate-text
- * n8n webhook: POST /webhook/generate-content
+ * Metni feedback ile yeniden ürettir (fire-and-forget).
+ *
+ * @param contentId - generatedContents/{contentId} doc id
+ * @param feedback  - Kullanıcı geri bildirimi (zorunlu, boş olamaz)
  */
-export async function regenerateText(contentId: string): Promise<{ success: boolean; content: GeneratedContent }> {
-  await delay(2000);
+export async function regenerateText(
+  contentId: string,
+  feedback: string
+): Promise<{ success: boolean; contentId: string; status: string }> {
+  const uid = await getUid();
+  if (!uid) throw new Error("Oturum açık değil");
+  if (!feedback || !feedback.trim()) {
+    throw new Error("Feedback boş olamaz");
+  }
+
+  const response = await fetch("/api/content/regenerate-text", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: uid, contentId, feedback }),
+  });
+
+  if (!response.ok) {
+    let msg = "Metin yeniden üretilemedi";
+    try {
+      const err = await response.json();
+      msg = err.error || msg;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+
+  const data = await response.json();
   return {
-    success: true,
-    content: {
-      ...mockGeneratedContent,
-      id: contentId,
-      text: {
-        ...mockGeneratedContent.text,
-        hook: "Yeni hook metni!",
-        caption: "Yeniden oluşturulmuş caption metni...",
-      },
-    },
+    success: data.success ?? true,
+    contentId: data.contentId ?? contentId,
+    status: data.status ?? "regenerating",
   };
 }
 
 /**
- * Regenerate visual content
- * Future endpoint: POST /api/content/:contentId/regenerate-visual
- * n8n webhook: POST /webhook/generate-visual
+ * Görseli yeniden ürettir (fire-and-forget).
+ * Aynı endpoint hem ilk üretim hem yeniden üretim için kullanılır.
+ *
+ * NOT: n8n öncesinde textApproved kontrolü yapar.
  */
-export async function regenerateVisual(contentId: string): Promise<{ success: boolean; content: GeneratedContent }> {
-  await delay(2500);
+export async function regenerateVisual(
+  contentId: string
+): Promise<{ success: boolean; contentId: string; status: string }> {
+  const uid = await getUid();
+  if (!uid) throw new Error("Oturum açık değil");
+
+  const response = await fetch("/api/content/generate-visual", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: uid, contentId }),
+  });
+
+  if (!response.ok) {
+    let msg = "Görsel üretilemedi";
+    try {
+      const err = await response.json();
+      msg = err.error || msg;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+
+  const data = await response.json();
   return {
-    success: true,
-    content: {
-      ...mockGeneratedContent,
-      id: contentId,
-      visual: {
-        ...mockGeneratedContent.visual,
-        prompt: "Yeni görsel prompt...",
-      },
-    },
+    success: data.success ?? true,
+    contentId: data.contentId ?? contentId,
+    status: data.status ?? "generating_visual",
   };
 }
 
 /**
- * Approve text content
- * Future endpoint: POST /api/content/:contentId/approve-text
+ * Metni onayla — Firestore'da textApproved: true set eder.
+ * n8n gerek yok, basit doc update.
+ *
+ * Eğer hem text hem visual onaylıysa status = "ready_to_schedule" olur.
  */
-export async function approveText(contentId: string): Promise<{ success: boolean }> {
-  await delay(300);
+export async function approveText(
+  contentId: string
+): Promise<{ success: boolean }> {
+  const ref = doc(db, "generatedContents", contentId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error("İçerik bulunamadı");
+  }
+  const data = snap.data();
+  const visualApproved = data?.visualApproved === true;
+  const newStatus = visualApproved ? "ready_to_schedule" : data?.status;
+
+  await updateDoc(ref, {
+    textApproved: true,
+    status: newStatus,
+    updatedAt: new Date().toISOString(),
+  });
+
   return { success: true };
 }
 
 /**
- * Approve visual content
- * Future endpoint: POST /api/content/:contentId/approve-visual
+ * Görseli onayla — Firestore'da visualApproved: true set eder.
+ * Eğer hem text hem visual onaylıysa status = "ready_to_schedule" olur.
  */
-export async function approveVisual(contentId: string): Promise<{ success: boolean }> {
-  await delay(300);
+export async function approveVisual(
+  contentId: string
+): Promise<{ success: boolean }> {
+  const ref = doc(db, "generatedContents", contentId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error("İçerik bulunamadı");
+  }
+  const data = snap.data();
+  const textApproved = data?.textApproved === true;
+  const newStatus = textApproved ? "ready_to_schedule" : data?.status;
+
+  await updateDoc(ref, {
+    visualApproved: true,
+    status: newStatus,
+    updatedAt: new Date().toISOString(),
+  });
+
   return { success: true };
 }
 
