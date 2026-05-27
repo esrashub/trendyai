@@ -23,37 +23,44 @@ service cloud.firestore {
     }
 
     match /contentIdeas/{ideaId} {
-      allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
     }
 
     // n8n "Start Weekly Flow" haftalık planı buraya yazar
     match /weeklyPlans/{weeklyPlanId} {
-      allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
     }
 
     // n8n "Generate Content Text" üretilen metni buraya yazar
     // Frontend onSnapshot ile dinler + approveText/Visual ile günceller
+    // NOT: Cache kontrolü için doc yokken de okuma yetkisi gerekir.
     match /generatedContents/{contentId} {
-      allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
     }
 
     // n8n "Generate Visual" görsel meta'sını buraya yazar
     match /generatedVisuals/{visualId} {
-      allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
     }
 
     // n8n "Schedule Content" zamanlanmış paylaşımları buraya yazar
     match /scheduledPosts/{postId} {
-      allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
     }
 
     match /calendarEvents/{eventId} {
-      allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
     }
 
@@ -68,12 +75,12 @@ service cloud.firestore {
 
     // n8n workflow'ları hata loglarını buraya yazar (sadece okuma — yazımı service account yapar)
     match /errorLogs/{logId} {
-      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
     }
 
     // n8n Generate Visual workflow log koleksiyonu
     match /visualGenerationLogs/{logId} {
-      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
     }
 
   }
