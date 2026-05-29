@@ -22,3 +22,45 @@ node_modules
 .DS_Store
 # TypeScript build cache
 tsconfig.tsbuildinfo
+
+# n8n workflow debug/fix scripts (geçici, commit edilmez)
+update-workflow.js
+update-all-workflows.js
+update-complex-workflows.js
+fix-normalize.js
+fix-normalize-v2.js
+fix-save-timestamp.js
+fix-ts-v3.js
+fix-wtp.js
+move-to-credential.js
+rebind-credential.js
+
+# n8n API JSON dump'ları (debug için, commit edilmez)
+workflow-current.json
+generate-visual.json
+swf.json
+wtp.json
+wtp-after.json
+gct-after.json
+gct-check.json
+gct-now.json
+now.json
+tmp-wf.json
+models-list.json
+creds.json
+execs.json
+exec-290.json
+exec-last.json
+exec299.json
+exec301.json
+exec303.json
+check.json
+check2.json
+check3.json
+latest.json
+latest2.json
+latest3.json
+latest4.json
+latestexec.json
+final.json
+final2.json
