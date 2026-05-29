@@ -23,7 +23,6 @@ import { ScheduleModal } from "@/components/modals/schedule-modal";
 import { FeedbackModal } from "@/components/modals/feedback-modal";
 import {
   getContentIdeaById,
-  getGeneratedContent,
   subscribeToGeneratedContent,
   generateContent,
   regenerateText,
@@ -71,101 +70,81 @@ export default function ContentCreatePage() {
 
   // Listener referansı — cleanup için
   const unsubRef = useRef<(() => void) | null>(null);
+  // Listener'dan içerik geldi mi (closure olmadan kontrol için)
+  const contentReceivedRef = useRef(false);
 
-  // İlk yükleme: idea oku, mevcut içerik var mı bak, yoksa tetikle
+  // İlk yükleme:
+  //   1. ContentIdea'yı oku (özet için)
+  //   2. Listener'ı HEMEN kur — Firestore'da içerik VARSA otomatik gelir
+  //   3. Sadece 2 saniye içinde hiçbir şey gelmezse n8n'i tetikle
+  // Bu sayede sayfa yenilensin/sıfırlansın, hep mevcut içerik gösterilir.
   useEffect(() => {
     let cancelled = false;
+    const contentId = `content_${ideaId}`;
 
-    const loadIdeaAndContent = async () => {
+    // 1. ContentIdea bilgisini Firestore'dan oku (özet kartı için)
+    const loadIdea = async () => {
       try {
-        // 1. ContentIdea'yı Firestore'dan oku
         const fetchedIdea = await getContentIdeaById(ideaId);
         if (cancelled) return;
-
-        if (!fetchedIdea) {
-          setIsLoadingIdea(false);
-          return;
-        }
         setIdea(fetchedIdea);
-        setIsLoadingIdea(false);
-
-        // 2. Mevcut generatedContent var mı kontrol et (cache)
-        const existing = await getGeneratedContent(ideaId);
-        if (cancelled) return;
-
-        if (existing) {
-          setContent(existing);
-          setGenerationStep(
-            existing.visual?.imageUrl ? "done" : "visual"
-          );
-          // Hâlâ değişiklik gelebilir (örn. görsel henüz üretilmemişse), listener kur
-          setupListener(existing.id);
-        } else {
-          // 3. Yoksa içerik üretimini başlat
-          await startGeneration();
-        }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Bilinmeyen hata";
-        console.error("[content-create] loadIdeaAndContent:", msg);
-        if (!cancelled) {
-          setErrorMessage(msg);
-          setIsLoadingIdea(false);
-        }
+        const msg = err instanceof Error ? err.message : "Fikir okunamadı";
+        console.warn("[content-create] loadIdea:", msg);
+        // Permission hatası kullanıcıyı durdurmasın — listener yine de çalışır
+      } finally {
+        if (!cancelled) setIsLoadingIdea(false);
       }
     };
 
-    const startGeneration = async () => {
+    // 2. Firestore listener — onSnapshot ile gerçek zamanlı dinle
+    const startListener = () => {
+      unsubRef.current = subscribeToGeneratedContent(contentId, (c) => {
+        if (cancelled || !c) return;
+
+        contentReceivedRef.current = true;
+        setContent(c);
+        setErrorMessage(null);
+
+        // Adımı status'a göre güncelle
+        if (c.visual?.imageUrl) {
+          setGenerationStep("done");
+        } else if (c.text?.hook) {
+          setGenerationStep("visual");
+        }
+        // Loading state'leri kapat
+        setIsGenerating(false);
+        setIsRegeneratingText(false);
+        setIsRegeneratingVisual(false);
+      });
+    };
+
+    // 3. 2 saniye içinde içerik gelmezse → n8n tetikle
+    const maybeTriggerGeneration = setTimeout(async () => {
+      if (cancelled || contentReceivedRef.current) return;
       try {
         setIsGenerating(true);
         setGenerationStep("starting");
-        const result = await generateContent(ideaId);
+        await generateContent(ideaId);
         if (cancelled) return;
-
-        // n8n tetiklendi, listener'ı kur → Firestore'dan gelecek
         setGenerationStep("text");
-        setupListener(result.contentId);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "İçerik üretilemedi";
-        console.error("[content-create] startGeneration:", msg);
+        console.error("[content-create] generation:", msg);
         if (!cancelled) {
           setErrorMessage(msg);
           setIsGenerating(false);
           toast.error(msg);
         }
       }
-    };
+    }, 2000);
 
-    const setupListener = (contentId: string) => {
-      // Önceki listener varsa temizle
-      if (unsubRef.current) {
-        unsubRef.current();
-      }
-      unsubRef.current = subscribeToGeneratedContent(contentId, (c) => {
-        if (cancelled) return;
-        if (!c) return; // Henüz oluşmamış, beklemeye devam
-
-        setContent(c);
-
-        // Adımı status'a göre güncelle
-        if (c.visual?.imageUrl) {
-          setGenerationStep("done");
-          setIsGenerating(false);
-          setIsRegeneratingText(false);
-          setIsRegeneratingVisual(false);
-        } else if (c.text?.hook) {
-          setGenerationStep("visual");
-          setIsRegeneratingText(false);
-          // İlk kez metin geldiyse otomatik görsel üretimi tetiklenmez
-          // Kullanıcı "Onayla" sonrası görsel için ayrı buton kullanmalı
-          // (n8n workflow'u textApproved kontrolü yapıyor)
-        }
-      });
-    };
-
-    loadIdeaAndContent();
+    loadIdea();
+    startListener();
 
     return () => {
       cancelled = true;
+      clearTimeout(maybeTriggerGeneration);
       if (unsubRef.current) {
         unsubRef.current();
         unsubRef.current = null;

@@ -22,36 +22,78 @@ service cloud.firestore {
       }
     }
 
+    // n8n "Start Weekly Flow" {userId}_{weekId}_{idx} formatında ID üretir.
+    // userId field eksik olsa bile doc ID pattern eşleşiyorsa erişime izin ver.
     match /contentIdeas/{ideaId} {
-      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
-      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (
+        resource == null
+        || resource.data.userId == request.auth.uid
+        || ideaId.matches('^' + request.auth.uid + '_.*')
+      );
+      allow write: if request.auth != null && (
+        resource.data.userId == request.auth.uid
+        || ideaId.matches('^' + request.auth.uid + '_.*')
+      );
+      allow create: if request.auth != null && (
+        request.resource.data.userId == request.auth.uid
+        || ideaId.matches('^' + request.auth.uid + '_.*')
+      );
     }
 
-    // n8n "Start Weekly Flow" haftalık planı buraya yazar
+    // weeklyPlans/{userId_weekId}
     match /weeklyPlans/{weeklyPlanId} {
-      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
-      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (
+        resource == null
+        || resource.data.userId == request.auth.uid
+        || weeklyPlanId.matches('^' + request.auth.uid + '_.*')
+      );
+      allow write: if request.auth != null && (
+        resource.data.userId == request.auth.uid
+        || weeklyPlanId.matches('^' + request.auth.uid + '_.*')
+      );
+      allow create: if request.auth != null && (
+        request.resource.data.userId == request.auth.uid
+        || weeklyPlanId.matches('^' + request.auth.uid + '_.*')
+      );
     }
 
-    // n8n "Generate Content Text" üretilen metni buraya yazar
-    // Frontend onSnapshot ile dinler + approveText/Visual ile günceller
-    // NOT: Cache kontrolü için doc yokken de okuma yetkisi gerekir.
+    // generatedContents/content_{userId}_{weekId}_{idx}
+    // n8n "Generate Content Text" yazar; Frontend onSnapshot ile dinler.
     match /generatedContents/{contentId} {
-      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
-      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (
+        resource == null
+        || resource.data.userId == request.auth.uid
+        || contentId.matches('^content_' + request.auth.uid + '_.*')
+      );
+      allow write: if request.auth != null && (
+        resource.data.userId == request.auth.uid
+        || contentId.matches('^content_' + request.auth.uid + '_.*')
+      );
+      allow create: if request.auth != null && (
+        request.resource.data.userId == request.auth.uid
+        || contentId.matches('^content_' + request.auth.uid + '_.*')
+      );
     }
 
-    // n8n "Generate Visual" görsel meta'sını buraya yazar
+    // generatedVisuals/visual_{contentId}_{timestamp}
+    // contentId zaten userId içeriyor → pattern kontrolü çalışır
     match /generatedVisuals/{visualId} {
-      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
-      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (
+        resource == null
+        || resource.data.userId == request.auth.uid
+        || visualId.matches('^visual_content_' + request.auth.uid + '_.*')
+      );
+      allow write: if request.auth != null && (
+        resource.data.userId == request.auth.uid
+        || visualId.matches('^visual_content_' + request.auth.uid + '_.*')
+      );
+      allow create: if request.auth != null && (
+        request.resource.data.userId == request.auth.uid
+        || visualId.matches('^visual_content_' + request.auth.uid + '_.*')
+      );
     }
 
-    // n8n "Schedule Content" zamanlanmış paylaşımları buraya yazar
+    // scheduledPosts — userId field zorunlu (post ID rastgele)
     match /scheduledPosts/{postId} {
       allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
       allow write: if request.auth != null && resource.data.userId == request.auth.uid;
