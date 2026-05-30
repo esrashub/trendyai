@@ -72,6 +72,8 @@ fix-upload-gcs.js
 fix-encoding-gct.js
 fix-unique-idea-ids.js
 fix-unique-idea-ids-v2.js
+fix-wtp-webhook.js
+wtp.json
 exec335-upload.json
 gct.json
 swf.json

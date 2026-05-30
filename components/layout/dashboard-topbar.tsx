@@ -2,8 +2,16 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Search, Bell, User, LogOut, Settings, Menu } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import {
+  Search,
+  Bell,
+  User,
+  LogOut,
+  Settings,
+  Menu,
+  Sparkles,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -23,6 +31,8 @@ import {
 } from "@/components/ui/sheet";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
+import { cn } from "@/lib/utils";
+import { dashboardNav } from "./dashboard-sidebar";
 
 interface DashboardTopbarProps {
   onMenuClick?: () => void;
@@ -30,8 +40,10 @@ interface DashboardTopbarProps {
 
 export function DashboardTopbar({ onMenuClick }: DashboardTopbarProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const { profile, logout } = useAuth();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const displayName = profile?.fullName || "Kullanıcı";
   const displayEmail = profile?.email || "";
@@ -59,16 +71,62 @@ export function DashboardTopbar({ onMenuClick }: DashboardTopbarProps) {
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background/95 px-4 backdrop-blur lg:px-6">
       {/* Mobile Menu Button */}
       <div className="flex items-center gap-4 lg:hidden">
-        <Sheet>
+        <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
           <SheetTrigger asChild>
             <Button variant="ghost" size="icon" onClick={onMenuClick}>
               <Menu className="h-5 w-5" />
               <span className="sr-only">Menüyü aç</span>
             </Button>
           </SheetTrigger>
-          <SheetContent side="left" className="w-64 p-0">
-            <SheetTitle className="sr-only">Mobil Menü</SheetTitle>
-            {/* Mobile navigation will be handled by sheet */}
+          <SheetContent side="left" className="w-64 p-0 bg-sidebar">
+            <SheetTitle className="sr-only">Navigasyon</SheetTitle>
+            {/* Logo */}
+            <div className="flex h-16 items-center gap-2 border-b border-sidebar-border px-4">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
+                <Sparkles className="h-5 w-5 text-primary-foreground" />
+              </div>
+              <span className="text-lg font-bold text-sidebar-foreground">
+                TrendyAI
+              </span>
+            </div>
+            {/* Navigation */}
+            <nav className="flex-1 space-y-1 p-3">
+              {dashboardNav.map((item) => {
+                const isActive =
+                  pathname === item.href ||
+                  (item.href !== "/dashboard" && pathname.startsWith(item.href));
+                return (
+                  <Link
+                    key={item.name}
+                    href={item.href}
+                    onClick={() => setMobileNavOpen(false)}
+                    className={cn(
+                      "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                      isActive
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+                    )}
+                  >
+                    <item.icon
+                      className={cn(
+                        "h-5 w-5 flex-shrink-0",
+                        isActive && "text-primary"
+                      )}
+                    />
+                    <span>{item.name}</span>
+                  </Link>
+                );
+              })}
+            </nav>
+            {/* Bottom */}
+            <div className="border-t border-sidebar-border p-4">
+              <div className="rounded-lg bg-primary/10 p-3">
+                <p className="text-xs font-medium text-primary">MVP Sürümü</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Bu bir demo sürümüdür.
+                </p>
+              </div>
+            </div>
           </SheetContent>
         </Sheet>
       </div>

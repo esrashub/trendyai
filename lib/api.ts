@@ -505,6 +505,139 @@ export async function saveContentPreferences(data: ContentPreferencesFormData): 
  * n8n workflow: "Start Weekly Flow / Personalized Planner"
  * Creates: weeklyPlans/{userId}_{weekId}, contentIdeas/{ideaId}, weeklyFlows/{userId}_{weekId}
  */
+/**
+ * Türkçe niche string'ini slug'a çevirir (n8n workflow ile aynı normalizasyon).
+ * Firestore trendPools/{weekId}_{slug} doküman ID'lerinde kullanılır.
+ */
+function nicheToSlug(raw: string): string {
+  if (!raw) return "";
+  return raw
+    .toLocaleLowerCase("tr-TR")
+    .replace(/ğ/g, "g")
+    .replace(/ü/g, "u")
+    .replace(/ş/g, "s")
+    .replace(/ı/g, "i")
+    .replace(/ö/g, "o")
+    .replace(/ç/g, "c")
+    .replace(/[^a-z0-9]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+}
+
+/**
+ * ISO 8601 week number (n8n Create Unique Niche List ile birebir aynı algoritma).
+ * Örnek: "2026-W22"
+ */
+function getCurrentWeekId(): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+  const week1 = new Date(d.getFullYear(), 0, 4);
+  const weekNum =
+    1 +
+    Math.round(
+      ((d.getTime() - week1.getTime()) / 86400000 -
+        3 +
+        ((week1.getDay() + 6) % 7)) /
+        7
+    );
+  return `${d.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
+}
+
+/**
+ * Kullanıcının niche'i için trend pool'un bu hafta için Firestore'da var olduğundan emin olur.
+ *
+ * Akış:
+ *   1. Brand identity'den niche oku (eksikse hata)
+ *   2. Firestore'da trendPools/{weekId}_{slug} kontrol et
+ *   3. Varsa → erken çıkış (skipped: true)
+ *   4. Yoksa → POST /api/trend-pool/ensure → n8n Weekly Trend Pool Builder webhook
+ *   5. ~60-90 sn bekle, sonra döner
+ *
+ * Frontend startWeeklyFlow ÖNCESİ çağırır.
+ */
+export async function ensureTrendPool(): Promise<{
+  success: boolean;
+  skipped: boolean;
+  niche?: string;
+  weekId?: string;
+  reason?: string;
+}> {
+  const uid = await getUid();
+  if (!uid) throw new Error("Oturum açık değil");
+
+  // 1. users/{uid}'den niche oku — Start Weekly Flow ile BİREBİR AYNI kaynak
+  //    Mismatch'i önler: ensureTrendPool ile Start Weekly Flow farklı niche kullanırsa
+  //    pool oluştuğu hâlde Start Weekly Flow başka yerde arar → "Trend havuzu bulunamadı"
+  const userSnap = await getDoc(doc(db, "users", uid));
+  if (!userSnap.exists()) {
+    throw new Error("Kullanıcı profili bulunamadı.");
+  }
+  const userData = userSnap.data() as { niche?: string; profession?: string };
+  let nicheRaw = userData.niche || userData.profession || "";
+
+  // Fallback: yine boşsa brand identity'den oku
+  if (!nicheRaw) {
+    const brandSnap = await getDoc(doc(db, "brandIdentities", uid));
+    if (brandSnap.exists()) {
+      const brand = brandSnap.data() as { niche?: string; sector?: string };
+      nicheRaw = brand.niche || brand.sector || "";
+    }
+  }
+
+  if (!nicheRaw) {
+    throw new Error(
+      "Niche/profession bilgisi bulunamadı. Onboarding'i tamamla."
+    );
+  }
+  const slug = nicheToSlug(nicheRaw);
+  const weekId = getCurrentWeekId();
+  const poolId = `${weekId}_${slug}`;
+
+  // 2. Mevcut pool var mı?
+  try {
+    const poolSnap = await getDoc(doc(db, "trendPools", poolId));
+    if (poolSnap.exists()) {
+      return {
+        success: true,
+        skipped: true,
+        niche: slug,
+        weekId,
+        reason: "trend pool already exists for this week",
+      };
+    }
+  } catch (err) {
+    console.warn("[ensureTrendPool] pool check failed:", err);
+    // Devam et — webhook builder yine de tetiklenecek
+  }
+
+  // 3. Webhook'a tetikle
+  const res = await fetch("/api/trend-pool/ensure", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ niche: nicheRaw, userId: uid }),
+  });
+
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const j = await res.json();
+      detail = j.error || j.detail || "";
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail || "Trend pool oluşturulamadı");
+  }
+
+  return {
+    success: true,
+    skipped: false,
+    niche: slug,
+    weekId,
+    reason: "trend pool built via webhook",
+  };
+}
+
 export async function startWeeklyFlow(): Promise<{ success: boolean; flowId: string; ideasCount?: number }> {
   const uid = auth.currentUser?.uid;
   if (!uid) throw new Error("Oturum açık değil");
@@ -830,6 +963,41 @@ export async function getGeneratedContent(
 
   const raw = snap.data() as GeneratedContentDoc;
   return mergeContentDocWithVisual(contentId, raw);
+}
+
+/**
+ * Tüm generatedContents'i giriş yapan kullanıcı için Firestore'dan oku.
+ * İçerik Oluşturma index sayfası (üzerinde çalışılan içerikleri listele) kullanır.
+ *
+ * Sıra: en son güncellenen üstte.
+ */
+export async function getAllGeneratedContents(): Promise<GeneratedContent[]> {
+  const uid = await getUid();
+  if (!uid) return [];
+
+  const q = query(
+    collection(db, "generatedContents"),
+    where("userId", "==", uid)
+  );
+  const snap = await getDocs(q);
+  const results: GeneratedContent[] = [];
+  for (const d of snap.docs) {
+    try {
+      const merged = await mergeContentDocWithVisual(
+        d.id,
+        d.data() as GeneratedContentDoc
+      );
+      results.push(merged);
+    } catch (err) {
+      console.warn("[getAllGeneratedContents] merge failed for", d.id, err);
+    }
+  }
+  // En son güncellenen üstte
+  return results.sort((a, b) => {
+    const aT = new Date(a.updatedAt || a.createdAt || 0).getTime();
+    const bT = new Date(b.updatedAt || b.createdAt || 0).getTime();
+    return bT - aT;
+  });
 }
 
 /**

@@ -618,21 +618,23 @@ function PostCard({
             {status.label}
           </Badge>
         </div>
-        <p className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
           {showDate && (
             <>
               <CalendarDays className="h-3 w-3" />
-              {format(parseISO(post.scheduledDate), "d MMM yyyy", {
-                locale: tr,
-              })}
+              <span>
+                {format(parseISO(post.scheduledDate), "d MMM yyyy", {
+                  locale: tr,
+                })}
+              </span>
               <Separator orientation="vertical" className="h-3" />
             </>
           )}
           <Clock className="h-3 w-3" />
-          {post.scheduledTime}
+          <span>{post.scheduledTime}</span>
           <Separator orientation="vertical" className="h-3" />
           <span className="capitalize">{post.platform}</span>
-        </p>
+        </div>
       </div>
       <div className="flex shrink-0 gap-1">
         <Button

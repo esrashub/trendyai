@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 
-const navigation = [
+export const dashboardNav = [
   {
     name: "Dashboard",
     href: "/dashboard",
@@ -83,7 +83,7 @@ export function DashboardSidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 p-3">
-        {navigation.map((item) => {
+        {dashboardNav.map((item) => {
           const isActive =
             pathname === item.href ||
             (item.href !== "/dashboard" && pathname.startsWith(item.href));
