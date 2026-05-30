@@ -5,7 +5,7 @@ export const oauthConfig = {
   meta: {
     clientId: process.env.META_APP_ID || "",
     clientSecret: process.env.META_APP_SECRET || "",
-    redirectUri: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/auth/callback/meta`,
+    redirectUri: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/auth/callback`,
     scopes: [
       "instagram_basic",
       "instagram_content_publish",

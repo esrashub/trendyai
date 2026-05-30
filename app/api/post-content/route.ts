@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { adminDb } from "@/lib/firebase-admin";
 
 interface PostRequest {
   uid: string;
@@ -18,7 +17,28 @@ interface PlatformCredentials {
   accountId: string;
 }
 
-// Post to Instagram (via Meta Graph API)
+interface MetaApiError {
+  error?: {
+    message: string;
+    type?: string;
+    code?: number;
+  };
+}
+
+interface MetaMediaResponse extends MetaApiError {
+  id?: string;
+}
+
+interface MetaPublishResponse extends MetaApiError {
+  id?: string;
+}
+
+/**
+ * Post to Instagram via Meta Graph API
+ * Two-step process:
+ * 1. Create media container with image_url and caption
+ * 2. Publish the container to Instagram
+ */
 async function postToInstagram(
   credentials: PlatformCredentials,
   content: string,
@@ -29,54 +49,78 @@ async function postToInstagram(
     const token = pageAccessToken || accessToken;
 
     if (!mediaUrls || mediaUrls.length === 0) {
-      // Text-only posts not supported on Instagram, need media
       return { success: false, error: "Instagram requires at least one image" };
     }
 
+    if (!accountId || !token) {
+      return { success: false, error: "Invalid Instagram credentials" };
+    }
+
     // Step 1: Create media container
+    const containerParams = new URLSearchParams({
+      image_url: mediaUrls[0],
+      caption: content,
+      access_token: token,
+    });
+
     const mediaResponse = await fetch(
       `https://graph.facebook.com/v18.0/${accountId}/media`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image_url: mediaUrls[0],
-          caption: content,
-          access_token: token,
-        }),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: containerParams.toString(),
       }
     );
-    const mediaData = await mediaResponse.json();
+
+    const mediaData: MetaMediaResponse = await mediaResponse.json();
 
     if (mediaData.error) {
+      console.error("[post-content] Container creation failed:", mediaData.error);
       return { success: false, error: mediaData.error.message };
     }
 
+    if (!mediaData.id) {
+      return { success: false, error: "Failed to create media container" };
+    }
+
+    const creationId = mediaData.id;
+
     // Step 2: Publish the container
+    const publishParams = new URLSearchParams({
+      creation_id: creationId,
+      access_token: token,
+    });
+
     const publishResponse = await fetch(
       `https://graph.facebook.com/v18.0/${accountId}/media_publish`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          creation_id: mediaData.id,
-          access_token: token,
-        }),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: publishParams.toString(),
       }
     );
-    const publishData = await publishResponse.json();
+
+    const publishData: MetaPublishResponse = await publishResponse.json();
 
     if (publishData.error) {
+      console.error("[post-content] Publishing failed:", publishData.error);
       return { success: false, error: publishData.error.message };
+    }
+
+    if (!publishData.id) {
+      return { success: false, error: "Failed to publish post" };
     }
 
     return { success: true, postId: publishData.id };
   } catch (error) {
+    console.error("[post-content] Instagram post error:", error);
     return { success: false, error: String(error) };
   }
 }
 
-// Post to Facebook Page
+/**
+ * Post to Facebook Page via Meta Graph API
+ */
 async function postToFacebook(
   credentials: PlatformCredentials,
   content: string,
@@ -87,44 +131,53 @@ async function postToFacebook(
     const targetPageId = pageId || accountId;
     const token = pageAccessToken || accessToken;
 
+    if (!targetPageId || !token) {
+      return { success: false, error: "Invalid Facebook credentials" };
+    }
+
     let endpoint: string;
-    let body: Record<string, string | string[]>;
+    let params: URLSearchParams;
 
     if (mediaUrls && mediaUrls.length > 0) {
       // Post with photo
       endpoint = `https://graph.facebook.com/v18.0/${targetPageId}/photos`;
-      body = {
+      params = new URLSearchParams({
         url: mediaUrls[0],
         caption: content,
         access_token: token,
-      };
+      });
     } else {
       // Text-only post
       endpoint = `https://graph.facebook.com/v18.0/${targetPageId}/feed`;
-      body = {
+      params = new URLSearchParams({
         message: content,
         access_token: token,
-      };
+      });
     }
 
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
     });
+
     const data = await response.json();
 
     if (data.error) {
+      console.error("[post-content] Facebook post failed:", data.error);
       return { success: false, error: data.error.message };
     }
 
     return { success: true, postId: data.id || data.post_id };
   } catch (error) {
+    console.error("[post-content] Facebook post error:", error);
     return { success: false, error: String(error) };
   }
 }
 
-// Post to LinkedIn
+/**
+ * Post to LinkedIn
+ */
 async function postToLinkedIn(
   credentials: PlatformCredentials,
   content: string,
@@ -132,6 +185,10 @@ async function postToLinkedIn(
 ): Promise<{ success: boolean; postId?: string; error?: string }> {
   try {
     const { accessToken, accountId } = credentials;
+
+    if (!accessToken || !accountId) {
+      return { success: false, error: "Invalid LinkedIn credentials" };
+    }
 
     const postBody: Record<string, unknown> = {
       author: `urn:li:person:${accountId}`,
@@ -149,9 +206,7 @@ async function postToLinkedIn(
       },
     };
 
-    // If there are images, we need to upload them first
     if (mediaUrls && mediaUrls.length > 0) {
-      // For simplicity, using article share with image URL
       (postBody.specificContent as Record<string, unknown>)["com.linkedin.ugc.ShareContent"] = {
         shareCommentary: { text: content },
         shareMediaCategory: "ARTICLE",
@@ -182,24 +237,26 @@ async function postToLinkedIn(
 
     return { success: true, postId: data.id };
   } catch (error) {
+    console.error("[post-content] LinkedIn post error:", error);
     return { success: false, error: String(error) };
   }
 }
 
-// Post to X (Twitter)
+/**
+ * Post to X (Twitter)
+ */
 async function postToTwitter(
   credentials: PlatformCredentials,
-  content: string,
-  mediaUrls?: string[]
+  content: string
 ): Promise<{ success: boolean; postId?: string; error?: string }> {
   try {
     const { accessToken } = credentials;
 
-    // Twitter API v2 - text only for now
-    // Media upload requires additional steps
-    const tweetBody: Record<string, unknown> = {
-      text: content,
-    };
+    if (!accessToken) {
+      return { success: false, error: "Invalid Twitter credentials" };
+    }
+
+    const tweetBody = { text: content };
 
     const response = await fetch("https://api.twitter.com/2/tweets", {
       method: "POST",
@@ -218,6 +275,7 @@ async function postToTwitter(
 
     return { success: true, postId: data.data?.id };
   } catch (error) {
+    console.error("[post-content] Twitter post error:", error);
     return { success: false, error: String(error) };
   }
 }
@@ -227,31 +285,43 @@ export async function POST(request: NextRequest) {
     const body: PostRequest = await request.json();
     const { uid, platform, content, mediaUrls } = body;
 
+    // Validate required fields
     if (!uid || !platform || !content) {
       return NextResponse.json(
-        { error: "uid, platform, and content are required" },
+        { success: false, error: "uid, platform, and content are required" },
         { status: 400 }
       );
     }
 
-    // Get platform credentials from Firestore
-    const credSnap = await getDoc(
-      doc(db, "connectedPlatforms", uid, "platforms", platform)
-    );
+    // Get platform credentials from Firestore using Admin SDK
+    const credDoc = await adminDb
+      .collection("connectedPlatforms")
+      .doc(uid)
+      .collection("platforms")
+      .doc(platform)
+      .get();
 
-    if (!credSnap.exists()) {
+    if (!credDoc.exists) {
       return NextResponse.json(
-        { error: `${platform} is not connected` },
+        { success: false, error: `${platform} is not connected` },
+        { status: 400 }
+      );
+    }
+
+    const credData = credDoc.data();
+    if (!credData) {
+      return NextResponse.json(
+        { success: false, error: "Invalid credentials data" },
         { status: 400 }
       );
     }
 
     const credentials: PlatformCredentials = {
-      accessToken: credSnap.data().accessToken,
-      refreshToken: credSnap.data().refreshToken,
-      pageId: credSnap.data().pageId,
-      pageAccessToken: credSnap.data().pageAccessToken,
-      accountId: credSnap.data().accountId,
+      accessToken: credData.accessToken,
+      refreshToken: credData.refreshToken,
+      pageId: credData.pageId,
+      pageAccessToken: credData.pageAccessToken,
+      accountId: credData.accountId,
     };
 
     let result: { success: boolean; postId?: string; error?: string };
@@ -267,18 +337,18 @@ export async function POST(request: NextRequest) {
         result = await postToLinkedIn(credentials, content, mediaUrls);
         break;
       case "twitter":
-        result = await postToTwitter(credentials, content, mediaUrls);
+        result = await postToTwitter(credentials, content);
         break;
       default:
         return NextResponse.json(
-          { error: `Unsupported platform: ${platform}` },
+          { success: false, error: `Unsupported platform: ${platform}` },
           { status: 400 }
         );
     }
 
     if (!result.success) {
       return NextResponse.json(
-        { error: result.error || "Failed to post" },
+        { success: false, error: result.error || "Failed to post content" },
         { status: 500 }
       );
     }
@@ -291,7 +361,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("[post-content] Error:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { success: false, error: "Internal server error" },
       { status: 500 }
     );
   }
