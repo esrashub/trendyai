@@ -22,7 +22,6 @@ import {
   mockContentPreferences,
   mockContentIdeas,
   mockGeneratedContent,
-  mockScheduledPosts,
   mockDashboardSummary,
   mockSettings,
 } from "./mock-data";
@@ -38,6 +37,7 @@ import {
   query,
   where,
   onSnapshot,
+  addDoc,
   type Unsubscribe,
 } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
@@ -582,12 +582,23 @@ export async function getRecentContentIdeas(): Promise<ContentIdea[]> {
 }
 
 /**
- * Get upcoming scheduled posts
- * Future endpoint: GET /api/dashboard/upcoming-scheduled
+ * Get upcoming scheduled posts — Firestore: scheduledPosts (userId == uid, status == scheduled)
+ * Dashboard'da "Yaklaşan Paylaşımlar" kartı için kullanılır.
  */
 export async function getUpcomingScheduledPosts(): Promise<ScheduledPost[]> {
-  await delay(500);
-  return mockScheduledPosts.filter((post) => post.status === "scheduled");
+  const all = await getScheduledPosts();
+  const now = new Date();
+  return all
+    .filter((p) => p.status === "scheduled")
+    .filter((p) => {
+      try {
+        const dt = new Date(`${p.scheduledDate}T${p.scheduledTime}:00`);
+        return dt.getTime() >= now.getTime() - 24 * 60 * 60 * 1000; // bugünden geriye 1 gün toleranslı
+      } catch {
+        return true;
+      }
+    })
+    .slice(0, 5);
 }
 
 // ==========================================
@@ -1046,19 +1057,50 @@ export async function scheduleContent(
   contentId: string,
   scheduleData: { date: string; time: string; platform: string }
 ): Promise<{ success: boolean; scheduledPost: ScheduledPost }> {
-  await delay(1000);
-  return {
-    success: true,
-    scheduledPost: {
-      id: "scheduled-" + Date.now(),
-      generatedContentId: contentId,
-      platform: scheduleData.platform,
+  const uid = await getUid();
+  if (!uid) throw new Error("Kullanıcı oturumu bulunamadı");
+
+  // İçeriğin başlığını/hook'unu al (calendar'da göstermek için)
+  let title = "Programlanmış İçerik";
+  try {
+    const cSnap = await getDoc(doc(db, "generatedContents", contentId));
+    if (cSnap.exists()) {
+      const c = cSnap.data() as GeneratedContentDoc;
+      title = c.hook || "Programlanmış İçerik";
+    }
+  } catch {
+    // Başlık alınamadıysa default kalsın
+  }
+
+  const post = {
+    generatedContentId: contentId,
+    userId: uid,
+    platform: scheduleData.platform,
+    scheduledDate: scheduleData.date,
+    scheduledTime: scheduleData.time,
+    title,
+    status: "scheduled" as const,
+    createdAt: new Date().toISOString(),
+  };
+
+  const ref = await addDoc(collection(db, "scheduledPosts"), post);
+
+  // Generated content'in status'unu güncelle
+  try {
+    await updateDoc(doc(db, "generatedContents", contentId), {
+      status: "scheduled",
+      scheduledPostId: ref.id,
       scheduledDate: scheduleData.date,
       scheduledTime: scheduleData.time,
-      title: "Programlanmış İçerik",
-      status: "scheduled",
-      createdAt: new Date().toISOString(),
-    },
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn("[scheduleContent] generatedContents update failed:", err);
+  }
+
+  return {
+    success: true,
+    scheduledPost: { id: ref.id, ...post },
   };
 }
 
@@ -1067,40 +1109,107 @@ export async function scheduleContent(
 // ==========================================
 
 /**
- * Get all scheduled posts
- * Future endpoint: GET /api/scheduled-posts
- * Database relation: This reads scheduled_posts table.
+ * Tüm programlanmış postları Firestore'dan oku.
+ * Sadece giriş yapan kullanıcının post'ları gelir.
  */
 export async function getScheduledPosts(): Promise<ScheduledPost[]> {
-  await delay(500);
-  return mockScheduledPosts;
+  const uid = await getUid();
+  if (!uid) return [];
+
+  const q = query(
+    collection(db, "scheduledPosts"),
+    where("userId", "==", uid)
+  );
+  const snap = await getDocs(q);
+  const posts = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ScheduledPost));
+  // En yakın tarihten en uzağa
+  return posts.sort((a, b) => {
+    const da = `${a.scheduledDate} ${a.scheduledTime}`;
+    const db_ = `${b.scheduledDate} ${b.scheduledTime}`;
+    return da.localeCompare(db_);
+  });
 }
 
 /**
- * Update scheduled post
- * Future endpoint: PUT /api/scheduled-posts/:id
+ * Real-time scheduledPosts dinleyici (Firestore onSnapshot).
+ * Calendar sayfası kullanır — yeni post eklenirse otomatik UI güncellenir.
+ */
+export function subscribeToScheduledPosts(
+  callback: (posts: ScheduledPost[]) => void
+): Unsubscribe {
+  let unsub: Unsubscribe = () => {};
+  let cancelled = false;
+
+  (async () => {
+    const uid = await getUid();
+    if (cancelled || !uid) return;
+
+    const q = query(
+      collection(db, "scheduledPosts"),
+      where("userId", "==", uid)
+    );
+    unsub = onSnapshot(
+      q,
+      (snap) => {
+        const posts = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() } as ScheduledPost))
+          .sort((a, b) => {
+            const da = `${a.scheduledDate} ${a.scheduledTime}`;
+            const db_ = `${b.scheduledDate} ${b.scheduledTime}`;
+            return da.localeCompare(db_);
+          });
+        callback(posts);
+      },
+      (err) => {
+        console.warn("[subscribeToScheduledPosts]", err.message);
+      }
+    );
+  })();
+
+  return () => {
+    cancelled = true;
+    unsub();
+  };
+}
+
+/**
+ * Programlanmış post'u güncelle (tarih, saat, platform vb).
  */
 export async function updateScheduledPost(
   postId: string,
   data: Partial<ScheduledPost>
 ): Promise<{ success: boolean; post: ScheduledPost }> {
-  await delay(500);
-  const post = mockScheduledPosts.find((p) => p.id === postId);
-  if (post) {
-    return {
-      success: true,
-      post: { ...post, ...data },
-    };
-  }
-  throw new Error("Programlanmış içerik bulunamadı");
+  const ref = doc(db, "scheduledPosts", postId);
+  await updateDoc(ref, { ...data, updatedAt: new Date().toISOString() });
+  const snap = await getDoc(ref);
+  return {
+    success: true,
+    post: { id: snap.id, ...snap.data() } as ScheduledPost,
+  };
 }
 
 /**
- * Cancel scheduled post
- * Future endpoint: DELETE /api/scheduled-posts/:id
+ * Programlanmış post'u iptal et (status: cancelled).
+ * Gerçek silme yerine soft-delete — geçmiş için kayıt kalır.
  */
-export async function cancelScheduledPost(postId: string): Promise<{ success: boolean }> {
-  await delay(500);
+export async function cancelScheduledPost(
+  postId: string
+): Promise<{ success: boolean }> {
+  await updateDoc(doc(db, "scheduledPosts", postId), {
+    status: "cancelled",
+    cancelledAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  return { success: true };
+}
+
+/**
+ * Programlanmış post'u tamamen sil (kullanıcı "Sil" derse).
+ */
+export async function deleteScheduledPost(
+  postId: string
+): Promise<{ success: boolean }> {
+  await deleteDoc(doc(db, "scheduledPosts", postId));
   return { success: true };
 }
 

@@ -251,12 +251,18 @@ export interface GeneratedVisualDoc {
 export interface ScheduledPost {
   id: string;
   generatedContentId: string;
+  userId?: string;
   platform: string;
-  scheduledDate: string;
-  scheduledTime: string;
-  title: string;
+  scheduledDate: string;     // "YYYY-MM-DD"
+  scheduledTime: string;     // "HH:mm"
+  title: string;             // İçeriğin hook'u veya başlığı
   status: 'scheduled' | 'published' | 'failed' | 'cancelled';
   createdAt: string;
+  updatedAt?: string;
+  publishedAt?: string;
+  cancelledAt?: string;
+  failureReason?: string;
+  scheduledPostId?: string;
 }
 
 export interface DashboardSummary {
