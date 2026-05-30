@@ -70,12 +70,17 @@ export function fixGarbledText(text: string | undefined | null): string {
       } catch {
         // encode/decode hatası → orijinal karakteri koru
       }
+
+      // 3. Türkçe çevirisi bulunamayan CJK karakteri = GPT hallüsinasyonu garbage
+      //    (örn. metnin sonundaki "课嚁" gibi). Atla, koruma.
+      continue;
     }
 
     result += ch;
   }
 
-  return result;
+  // Sondaki boşluk + noktalama artıklarını trim et (CJK kaldırınca kalan boşluklar)
+  return result.replace(/\s+$/, "");
 }
 
 /**

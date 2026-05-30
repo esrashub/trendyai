@@ -80,27 +80,50 @@ export default function ContentCreatePage() {
   // Bu sayede sayfa yenilensin/sıfırlansın, hep mevcut içerik gösterilir.
   useEffect(() => {
     let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    // loadedIdea: listener closure'unda stale check için kullanılır.
+    // useState'e güvenemiyoruz çünkü closure capture timing'i problemli.
+    let loadedIdea: ContentIdea | null = null;
     const contentId = `content_${ideaId}`;
 
-    // 1. ContentIdea bilgisini Firestore'dan oku (özet kartı için)
-    const loadIdea = async () => {
+    const init = async () => {
+      // 1. ContentIdea'yı oku — listener'dan ÖNCE bitsin ki stale check yapabilelim
       try {
-        const fetchedIdea = await getContentIdeaById(ideaId);
+        loadedIdea = await getContentIdeaById(ideaId);
         if (cancelled) return;
-        setIdea(fetchedIdea);
+        setIdea(loadedIdea);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Fikir okunamadı";
         console.warn("[content-create] loadIdea:", msg);
-        // Permission hatası kullanıcıyı durdurmasın — listener yine de çalışır
+        // Devam et — stale check skip edilir ama listener çalışır
       } finally {
         if (!cancelled) setIsLoadingIdea(false);
       }
-    };
 
-    // 2. Firestore listener — onSnapshot ile gerçek zamanlı dinle
-    const startListener = () => {
+      if (cancelled) return;
+
+      // 2. Firestore listener — stale cache kontrolüyle
       unsubRef.current = subscribeToGeneratedContent(contentId, (c) => {
         if (cancelled || !c) return;
+
+        // STALE CACHE KONTROLÜ:
+        // ContentId = `content_${ideaId}` formatında. ideaId = "userId_W22_001" gibi
+        // haftalık tekrarlı ID. Eski testlerden kalan generatedContents dokümanları
+        // aynı ID'yi paylaşabilir. Eğer mevcut idea'dan ESKİ tarihliyse → stale.
+        if (loadedIdea?.createdAt && c.createdAt) {
+          const ideaTime = new Date(loadedIdea.createdAt).getTime();
+          const contentTime = new Date(c.createdAt).getTime();
+          if (
+            !isNaN(ideaTime) &&
+            !isNaN(contentTime) &&
+            contentTime < ideaTime
+          ) {
+            console.warn(
+              "[content-create] Stale cache detected — content older than idea, triggering fresh generation"
+            );
+            return; // contentReceivedRef = false kalsın → 2sn timer üretimi başlatsın
+          }
+        }
 
         contentReceivedRef.current = true;
         setContent(c);
@@ -117,34 +140,33 @@ export default function ContentCreatePage() {
         setIsRegeneratingText(false);
         setIsRegeneratingVisual(false);
       });
+
+      // 3. 2 saniye içinde fresh içerik gelmezse → n8n tetikle
+      timeoutId = setTimeout(async () => {
+        if (cancelled || contentReceivedRef.current) return;
+        try {
+          setIsGenerating(true);
+          setGenerationStep("starting");
+          await generateContent(ideaId);
+          if (cancelled) return;
+          setGenerationStep("text");
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "İçerik üretilemedi";
+          console.error("[content-create] generation:", msg);
+          if (!cancelled) {
+            setErrorMessage(msg);
+            setIsGenerating(false);
+            toast.error(msg);
+          }
+        }
+      }, 2000);
     };
 
-    // 3. 2 saniye içinde içerik gelmezse → n8n tetikle
-    const maybeTriggerGeneration = setTimeout(async () => {
-      if (cancelled || contentReceivedRef.current) return;
-      try {
-        setIsGenerating(true);
-        setGenerationStep("starting");
-        await generateContent(ideaId);
-        if (cancelled) return;
-        setGenerationStep("text");
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "İçerik üretilemedi";
-        console.error("[content-create] generation:", msg);
-        if (!cancelled) {
-          setErrorMessage(msg);
-          setIsGenerating(false);
-          toast.error(msg);
-        }
-      }
-    }, 2000);
-
-    loadIdea();
-    startListener();
+    init();
 
     return () => {
       cancelled = true;
-      clearTimeout(maybeTriggerGeneration);
+      if (timeoutId) clearTimeout(timeoutId);
       if (unsubRef.current) {
         unsubRef.current();
         unsubRef.current = null;
