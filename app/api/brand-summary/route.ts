@@ -1,11 +1,25 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
-
+/**
+ * POST /api/brand-summary
+ *
+ * Marka bilgilerinden AI özeti oluşturur (gpt-4.1-mini).
+ * Onboarding "Brand Identity" sayfasında "AI Marka Özeti Oluştur" butonu çağırır.
+ *
+ * Gemini quota sorunları nedeniyle OpenAI'a taşındı (29 May 2026).
+ */
 export async function POST(request: NextRequest) {
   try {
     const data = await request.json();
+
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      console.error("[brand-summary] OPENAI_API_KEY env eksik");
+      return NextResponse.json(
+        { success: false, error: "Sunucu yapılandırma hatası (OPENAI_API_KEY)" },
+        { status: 500 }
+      );
+    }
 
     const prompt = `Sen bir sosyal medya pazarlama uzmanısın. Aşağıdaki marka bilgilerini analiz ederek kısa ve etkili bir marka kimliği özeti oluştur.
 
@@ -42,11 +56,63 @@ Aşağıdaki formatta, her başlık için 1-2 cümle yaz. Tam olarak bu formatı
 
 **Görsel Yön:** [görsel stil ve renkler]`;
 
-    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-    
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    const text = response.text();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60_000);
+
+    let openaiRes: Response;
+    try {
+      openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4.1-mini",
+          messages: [
+            {
+              role: "system",
+              content:
+                "Sen profesyonel bir sosyal medya pazarlama uzmanısın. Türkçe, samimi ve özlü yaz.",
+            },
+            { role: "user", content: prompt },
+          ],
+          temperature: 0.7,
+          max_tokens: 1000,
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!openaiRes.ok) {
+      const errorText = await openaiRes.text().catch(() => "");
+      console.error(
+        "[brand-summary] OpenAI hata:",
+        openaiRes.status,
+        errorText.slice(0, 300)
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Özet oluşturulamadı",
+          detail: `OpenAI ${openaiRes.status}`,
+        },
+        { status: openaiRes.status }
+      );
+    }
+
+    const json = await openaiRes.json();
+    const text: string = json?.choices?.[0]?.message?.content || "";
+
+    if (!text) {
+      console.error("[brand-summary] OpenAI boş yanıt:", JSON.stringify(json).slice(0, 300));
+      return NextResponse.json(
+        { success: false, error: "AI boş yanıt döndü" },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({ success: true, summary: text });
   } catch (err: unknown) {

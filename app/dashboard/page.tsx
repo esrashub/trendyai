@@ -22,6 +22,7 @@ import {
   getRecentContentIdeas,
   getUpcomingScheduledPosts,
   startWeeklyFlow,
+  ensureTrendPool,
 } from "@/lib/api";
 import type { DashboardSummary, ContentIdea, ScheduledPost } from "@/types";
 import { toast } from "sonner";
@@ -57,6 +58,14 @@ export default function DashboardPage() {
   const handleStartFlow = async () => {
     setIsStartingFlow(true);
     try {
+      // 1. Önce trend pool'un bu hafta için var olduğundan emin ol
+      //    (yoksa Weekly Trend Pool Builder webhook'u tetikler, ~60-90 sn)
+      const tp = await ensureTrendPool();
+      if (!tp.skipped) {
+        toast.info("Trend havuzu oluşturuluyor... (~60-90 sn)");
+      }
+
+      // 2. Haftalık akışı başlat (artık trend pool garantili)
       const result = await startWeeklyFlow();
       const msg = result.ideasCount
         ? `${result.ideasCount} içerik fikri oluşturuldu! İçerik Fikirleri sayfasını kontrol edin.`

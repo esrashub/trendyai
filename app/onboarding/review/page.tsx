@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { OnboardingStepper } from "@/components/layout/onboarding-stepper";
 import {
   startWeeklyFlow,
+  ensureTrendPool,
   getBrandIdentity,
   getContentPreferences,
   getUserData,
@@ -76,6 +77,8 @@ export default function ReviewPage() {
     }
 
     try {
+      // Yeni kullanıcı: önce trend pool oluşturulmalı (bu hafta için yoksa)
+      await ensureTrendPool();
       await startWeeklyFlow();
       router.push("/dashboard/content-ideas");
     } catch {
