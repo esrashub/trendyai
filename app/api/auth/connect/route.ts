@@ -40,22 +40,26 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const state = generateState();
+  // State formatı: `${platform}-${randomNonce}`
+  // Platform bilgisini state'e encode ederiz — cookie kaybolursa bile
+  // callback platform'u state'ten parse edebilir.
+  const nonce = generateState();
+  const state = `${platform}-${nonce}`;
   const cookieStore = await cookies();
-  
-  // Store state and platform in cookies for verification
+
+  // Cookie fallback olarak hâlâ tutulur (uyumluluk + CSRF kontrolü)
   cookieStore.set("oauth_state", state, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 600, // 10 minutes
+    maxAge: 3600, // 60 dk (önceki 10 dk yetersizdi)
   });
-  
+
   cookieStore.set("oauth_platform", platform, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 600,
+    maxAge: 3600,
   });
 
   let authUrl: string;

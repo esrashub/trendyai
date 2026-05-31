@@ -16,8 +16,15 @@ export async function GET(
 
   const cookieStore = await cookies();
   const storedState = cookieStore.get("oauth_state")?.value;
-  const platform = cookieStore.get("oauth_platform")?.value;
+  const cookiePlatform = cookieStore.get("oauth_platform")?.value;
   const codeVerifier = cookieStore.get("oauth_code_verifier")?.value;
+
+  // Platform'u state'ten parse et (cookie kaybolursa fallback).
+  // State formatı: `${platform}-${nonce}` — connect route'unda set edildi.
+  const platformFromState = state?.includes("-")
+    ? state.split("-")[0]
+    : undefined;
+  const platform = platformFromState || cookiePlatform;
 
   // Clean up cookies
   cookieStore.delete("oauth_state");
