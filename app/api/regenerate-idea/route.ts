@@ -3,8 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 /**
  * POST /api/regenerate-idea
  *
- * n8n "Regenerate Content Idea" webhook'una proxy.
+ * n8n "Regenerate Content Idea" webhook'una fire-and-forget proxy.
  * Kullanıcının feedback verdiği içerik fikrini yeniden oluşturur.
+ * Frontend onSnapshot ile Firestore'u dinlediği için yanıt beklemiyoruz.
  *
  * Request body: { ideaId: string, feedback: string }
  */
@@ -25,32 +26,25 @@ export async function POST(request: NextRequest) {
       "https://baprojectie326.app.n8n.cloud";
     const webhookUrl = `${n8nBase}/webhook/regenerate-content-idea`;
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60_000);
+    // Fire-and-forget: n8n'e isteği gönder ama yanıtı bekleme
+    // Frontend zaten onSnapshot ile Firestore'u dinliyor
+    fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ideaId, feedback }),
+    }).catch((err) => {
+      // Hataları logla ama UI'ı engelleme
+      console.warn("[regenerate-idea] n8n webhook hatası:", err.message);
+    });
 
-    let n8nResponse: Response;
-    try {
-      n8nResponse = await fetch(webhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ideaId, feedback }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    if (!n8nResponse.ok) {
-      // Webhook henüz kurulmamış olabilir — sessizce başarı döndür
-      console.warn("[regenerate-idea] n8n yanıt:", n8nResponse.status);
-      return NextResponse.json({ success: true, queued: true });
-    }
-
-    return NextResponse.json({ success: true });
-  } catch (err: unknown) {
-    // Webhook yoksa veya timeout olduysa UI'ı engelleme
-    const message = err instanceof Error ? err.message : "Bilinmeyen hata";
-    console.warn("[regenerate-idea] Hata (yoksayıldı):", message);
+    // Hemen başarı dön - n8n arka planda çalışacak
     return NextResponse.json({ success: true, queued: true });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Bilinmeyen hata";
+    console.error("[regenerate-idea] Hata:", message);
+    return NextResponse.json(
+      { success: false, error: message },
+      { status: 500 }
+    );
   }
 }
