@@ -71,6 +71,9 @@ export async function GET(request: NextRequest) {
       scope: config.scopes.join(","),
       response_type: "code",
       state,
+      // Facebook'un "Reconnect" cache'ini bypass et — her zaman fresh consent göster.
+      // Kullanıcı yeni Page/Instagram bağladığında izinler güncellenebilsin.
+      auth_type: "reauthorize",
     });
     authUrl = `${config.authUrl}?${params.toString()}`;
   } else if (provider === "linkedin") {
