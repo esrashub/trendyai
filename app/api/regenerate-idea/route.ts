@@ -12,10 +12,18 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { ideaId, feedback } = body;
+    // userId: client'tan veya ideaId formatından (userId_weekId_idx_runId) türet
+    const userId: string = body.userId || (ideaId ? ideaId.split("_")[0] : "");
 
     if (!ideaId || !feedback) {
       return NextResponse.json(
         { success: false, error: "ideaId ve feedback zorunludur" },
+        { status: 400 }
+      );
+    }
+    if (!userId) {
+      return NextResponse.json(
+        { success: false, error: "userId belirlenemedi" },
         { status: 400 }
       );
     }
@@ -33,7 +41,7 @@ export async function POST(request: NextRequest) {
       n8nResponse = await fetch(webhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ideaId, feedback }),
+        body: JSON.stringify({ userId, ideaId, feedback }),
         signal: controller.signal,
       });
     } finally {
