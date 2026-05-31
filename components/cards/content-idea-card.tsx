@@ -9,6 +9,7 @@ import {
   Clock,
   TrendingUp,
   Trash2,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,6 +24,7 @@ interface ContentIdeaCardProps {
   onCreate: (id: string) => void;
   onDelete: (id: string) => void;
   isLoading?: boolean;
+  isRegenerating?: boolean;
 }
 
 export function ContentIdeaCard({
@@ -33,6 +35,7 @@ export function ContentIdeaCard({
   onCreate,
   onDelete,
   isLoading,
+  isRegenerating,
 }: ContentIdeaCardProps) {
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -73,7 +76,16 @@ export function ContentIdeaCard({
   };
 
   return (
-    <Card className="border border-border/50 transition-shadow hover:shadow-md">
+    <Card className="relative border border-border/50 transition-shadow hover:shadow-md">
+      {/* Regenerating Overlay */}
+      {isRegenerating && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-lg bg-background/80 backdrop-blur-sm">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="mt-2 text-sm font-medium text-foreground">
+            Yeniden oluşturuluyor...
+          </p>
+        </div>
+      )}
       <CardContent className="p-5">
         {/* Header */}
         <div className="mb-4 flex items-start justify-between gap-4">

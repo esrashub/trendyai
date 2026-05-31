@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Lightbulb, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,8 @@ import {
   deleteContentIdea,
   regenerateContentIdeaWithFeedback,
 } from "@/lib/api";
+import { db } from "@/lib/firebase";
+import { doc, onSnapshot } from "firebase/firestore";
 import type { ContentIdea } from "@/types";
 import { toast } from "sonner";
 
@@ -28,6 +30,7 @@ export default function ContentIdeasPage() {
   const [ideas, setIdeas] = useState<ContentIdea[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [feedbackModal, setFeedbackModal] = useState<{
@@ -39,6 +42,89 @@ export default function ContentIdeasPage() {
     ideaId: null,
     ideaTitle: "",
   });
+
+  // Store unsubscribe functions and timeouts for cleanup
+  const listenersRef = useRef<Map<string, () => void>>(new Map());
+  const timeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+
+  // Cleanup function for a specific idea listener
+  const cleanupListener = useCallback((ideaId: string) => {
+    const unsubscribe = listenersRef.current.get(ideaId);
+    if (unsubscribe) {
+      unsubscribe();
+      listenersRef.current.delete(ideaId);
+    }
+    const timeout = timeoutsRef.current.get(ideaId);
+    if (timeout) {
+      clearTimeout(timeout);
+      timeoutsRef.current.delete(ideaId);
+    }
+    setRegeneratingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(ideaId);
+      return next;
+    });
+  }, []);
+
+  // Start listening to Firestore document changes after feedback
+  const startListeningForChanges = useCallback(
+    (ideaId: string, originalTitle: string, originalDescription: string) => {
+      if (!db) return;
+
+      // Set regenerating state
+      setRegeneratingIds((prev) => new Set(prev).add(ideaId));
+
+      // Set up 60 second timeout
+      const timeout = setTimeout(() => {
+        cleanupListener(ideaId);
+        toast.error("Yeniden oluşturma zaman aşımına uğradı");
+      }, 60000);
+      timeoutsRef.current.set(ideaId, timeout);
+
+      // Set up Firestore listener
+      const docRef = doc(db, "contentIdeas", ideaId);
+      const unsubscribe = onSnapshot(
+        docRef,
+        (snapshot) => {
+          if (!snapshot.exists()) return;
+
+          const data = snapshot.data() as ContentIdea;
+          const hasChanged =
+            data.title !== originalTitle ||
+            data.description !== originalDescription;
+
+          if (hasChanged) {
+            // Update the idea in state
+            setIdeas((prev) =>
+              prev.map((idea) =>
+                idea.id === ideaId ? { ...data, id: ideaId } : idea
+              )
+            );
+            cleanupListener(ideaId);
+            toast.success("Fikir güncellendi!");
+          }
+        },
+        (error) => {
+          console.error("Firestore listener error:", error);
+          cleanupListener(ideaId);
+          toast.error("Dinleme hatası oluştu");
+        }
+      );
+
+      listenersRef.current.set(ideaId, unsubscribe);
+    },
+    [cleanupListener]
+  );
+
+  // Cleanup all listeners on unmount
+  useEffect(() => {
+    return () => {
+      listenersRef.current.forEach((unsubscribe) => unsubscribe());
+      timeoutsRef.current.forEach((timeout) => clearTimeout(timeout));
+      listenersRef.current.clear();
+      timeoutsRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     const fetchIdeas = async () => {
@@ -115,22 +201,22 @@ export default function ContentIdeasPage() {
   const handleFeedbackSubmit = async (feedback: string) => {
     if (!feedbackModal.ideaId) return;
 
+    const ideaId = feedbackModal.ideaId;
+    const idea = ideas.find((i) => i.id === ideaId);
+    const originalTitle = idea?.title || "";
+    const originalDescription = idea?.description || "";
+
     try {
-      const result = await regenerateContentIdeaWithFeedback(
-        feedbackModal.ideaId,
-        feedback
-      );
-      setIdeas((prev) =>
-        prev.map((idea) =>
-          idea.id === feedbackModal.ideaId
-            ? { ...result.idea, id: idea.id }
-            : idea
-        )
-      );
-      toast.success("Yeni içerik fikri oluşturuldu!");
+      // Call the API to send feedback to n8n webhook
+      await regenerateContentIdeaWithFeedback(ideaId, feedback);
+
+      // Start listening for Firestore changes from n8n
+      startListeningForChanges(ideaId, originalTitle, originalDescription);
+
+      toast.info("Feedback gönderildi, yeni fikir oluşturuluyor...");
     } catch {
-      toast.error("Yeni fikir oluşturulamadı");
-      throw new Error("Failed to regenerate");
+      toast.error("Feedback gönderilemedi");
+      throw new Error("Failed to send feedback");
     }
   };
 
@@ -216,6 +302,7 @@ export default function ContentIdeasPage() {
               onCreate={handleCreate}
               onDelete={handleDelete}
               isLoading={actionLoading === idea.id}
+              isRegenerating={regeneratingIds.has(idea.id)}
             />
           ))}
         </div>
