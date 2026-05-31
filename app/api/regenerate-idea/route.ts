@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
 
     const n8nBase =
       process.env.N8N_WEBHOOK_BASE_URL ||
-      "https://baprojectie326.app.n8n.cloud";
+      "https://trendd.app.n8n.cloud";
     const webhookUrl = `${n8nBase}/webhook/regenerate-content-idea`;
 
     // Fire-and-forget: n8n'e isteği gönder ama yanıtı bekleme
