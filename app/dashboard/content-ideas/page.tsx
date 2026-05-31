@@ -145,7 +145,14 @@ export default function ContentIdeasPage() {
     return true;
   });
 
-  const uniquePlatforms = [...new Set(ideas.map((idea) => idea.platform))];
+  // Boş/null platform değerlerini çıkar — Radix Select boş value kabul etmez
+  const uniquePlatforms = [
+    ...new Set(
+      ideas
+        .map((idea) => idea.platform)
+        .filter((p): p is string => typeof p === "string" && p.trim() !== "")
+    ),
+  ];
 
   if (isLoading) {
     return (

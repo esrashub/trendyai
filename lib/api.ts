@@ -824,6 +824,10 @@ export async function regenerateContentIdeaWithFeedback(
   ideaId: string,
   feedback: string
 ): Promise<{ success: boolean; idea: ContentIdea }> {
+  // userId: önce auth'tan, fallback olarak ideaId formatından (userId_weekId_idx_runId)
+  const uid = await getUid();
+  const userId = uid || ideaId.split("_")[0] || "";
+
   await updateDoc(doc(db, "contentIdeas", ideaId), {
     feedback,
     status: "regenerated",
@@ -835,7 +839,7 @@ export async function regenerateContentIdeaWithFeedback(
     await fetch("/api/regenerate-idea", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ideaId, feedback }),
+      body: JSON.stringify({ userId, ideaId, feedback }),
     });
   } catch {
     // n8n akışı henüz hazır olmayabilir
