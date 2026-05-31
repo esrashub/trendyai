@@ -43,9 +43,8 @@ export default function ContentIdeasPage() {
     ideaTitle: "",
   });
 
-  // Store unsubscribe functions and timeouts for cleanup
+  // Store unsubscribe functions for cleanup
   const listenersRef = useRef<Map<string, () => void>>(new Map());
-  const timeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
   // Cleanup function for a specific idea listener
   const cleanupListener = useCallback((ideaId: string) => {
@@ -53,11 +52,6 @@ export default function ContentIdeasPage() {
     if (unsubscribe) {
       unsubscribe();
       listenersRef.current.delete(ideaId);
-    }
-    const timeout = timeoutsRef.current.get(ideaId);
-    if (timeout) {
-      clearTimeout(timeout);
-      timeoutsRef.current.delete(ideaId);
     }
     setRegeneratingIds((prev) => {
       const next = new Set(prev);
@@ -74,14 +68,7 @@ export default function ContentIdeasPage() {
       // Set regenerating state
       setRegeneratingIds((prev) => new Set(prev).add(ideaId));
 
-      // Set up 60 second timeout
-      const timeout = setTimeout(() => {
-        cleanupListener(ideaId);
-        toast.error("Yeniden oluşturma zaman aşımına uğradı");
-      }, 60000);
-      timeoutsRef.current.set(ideaId, timeout);
-
-      // Set up Firestore listener
+      // Set up Firestore listener (no timeout - wait until n8n updates)
       const docRef = doc(db, "contentIdeas", ideaId);
       const unsubscribe = onSnapshot(
         docRef,
@@ -120,9 +107,7 @@ export default function ContentIdeasPage() {
   useEffect(() => {
     return () => {
       listenersRef.current.forEach((unsubscribe) => unsubscribe());
-      timeoutsRef.current.forEach((timeout) => clearTimeout(timeout));
       listenersRef.current.clear();
-      timeoutsRef.current.clear();
     };
   }, []);
 
