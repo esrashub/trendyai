@@ -48,7 +48,6 @@ function PlatformsContent() {
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingData, setIsLoadingData] = useState(true);
-  const [authReady, setAuthReady] = useState(false);
   const [pendingConnection, setPendingConnection] = useState<{
     connected: string;
     data: string;
@@ -92,11 +91,10 @@ function PlatformsContent() {
     },
   ]);
 
-  // Wait for Firebase auth to be ready
+  // Wait for Firebase auth to be ready with a valid user
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       console.log("[v0] Auth state changed, user:", user?.uid);
-      setAuthReady(true);
     });
     return () => unsubscribe();
   }, []);
@@ -104,6 +102,45 @@ function PlatformsContent() {
   // Load existing connections on mount
   useEffect(() => {
     const loadConnections = async () => {
+      // Wait for auth to be ready before loading
+      if (!auth.currentUser) {
+        // Try waiting for auth state
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+          if (user) {
+            unsubscribe();
+            try {
+              const connections = await getConnectedPlatforms();
+              if (connections.length > 0) {
+                setPlatforms((prev) =>
+                  prev.map((p) => {
+                    const connection = connections.find((c) => c.platform === p.id);
+                    if (connection) {
+                      return {
+                        ...p,
+                        status: "connected" as PlatformStatus,
+                        accountName: connection.username || connection.platformName,
+                        profilePicture: connection.profileImage,
+                      };
+                    }
+                    return p;
+                  })
+                );
+              }
+            } catch (error) {
+              console.error("Failed to load connections:", error);
+            } finally {
+              setIsLoadingData(false);
+            }
+          }
+        });
+        
+        // Timeout after 5 seconds
+        setTimeout(() => {
+          setIsLoadingData(false);
+        }, 5000);
+        return;
+      }
+
       try {
         const connections = await getConnectedPlatforms();
         if (connections.length > 0) {
@@ -193,43 +230,89 @@ function PlatformsContent() {
 
   // Process pending connection once auth is ready
   useEffect(() => {
-    if (!authReady || !pendingConnection) return;
+    if (!pendingConnection) return;
 
     const { connected, data } = pendingConnection;
-    console.log("[v0] Auth ready, processing pending connection for:", connected);
-
-    try {
-      const connectionData = JSON.parse(atob(data));
-      
-      saveConnectedPlatform(connectionData)
-        .then(() => {
-          console.log("[v0] Connection saved successfully");
-          setPlatforms((prev) =>
-            prev.map((p) =>
-              p.id === connected
-                ? {
-                    ...p,
-                    status: "connected" as PlatformStatus,
-                    accountName: connectionData.accountName,
-                    profilePicture: connectionData.profilePicture,
-                  }
-                : p
-            )
-          );
-          toast.success(`${connectionData.accountName} başarıyla bağlandı!`);
-        })
-        .catch((err) => {
-          console.error("[v0] Failed to save connection:", err);
-          toast.error("Bağlantı kaydedilemedi. Lütfen tekrar deneyin.");
-        })
-        .finally(() => {
-          setPendingConnection(null);
+    
+    const processPendingConnection = async () => {
+      // Wait for auth user to be available
+      const user = auth.currentUser;
+      if (!user) {
+        console.log("[v0] Waiting for auth user...");
+        // Set up listener and wait
+        const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
+          if (authUser) {
+            unsubscribe();
+            console.log("[v0] Auth user available, processing connection for:", connected);
+            
+            try {
+              const connectionData = JSON.parse(atob(data));
+              await saveConnectedPlatform(connectionData);
+              
+              console.log("[v0] Connection saved successfully");
+              setPlatforms((prev) =>
+                prev.map((p) =>
+                  p.id === connected
+                    ? {
+                        ...p,
+                        status: "connected" as PlatformStatus,
+                        accountName: connectionData.accountName,
+                        profilePicture: connectionData.profilePicture,
+                      }
+                    : p
+                )
+              );
+              toast.success(`${connectionData.accountName} başarıyla bağlandı!`);
+            } catch (err) {
+              console.error("[v0] Failed to save connection:", err);
+              toast.error("Bağlantı kaydedilemedi. Lütfen tekrar deneyin.");
+            } finally {
+              setPendingConnection(null);
+            }
+          }
         });
-    } catch (err) {
-      console.error("[v0] Failed to parse connection data:", err);
-      setPendingConnection(null);
-    }
-  }, [authReady, pendingConnection]);
+        
+        // Timeout after 10 seconds
+        setTimeout(() => {
+          if (pendingConnection) {
+            console.error("[v0] Auth timeout - user not available");
+            toast.error("Oturum zaman aşımı. Lütfen tekrar giriş yapın.");
+            setPendingConnection(null);
+          }
+        }, 10000);
+        return;
+      }
+
+      // User already available
+      console.log("[v0] Auth user already available, processing connection for:", connected);
+      try {
+        const connectionData = JSON.parse(atob(data));
+        await saveConnectedPlatform(connectionData);
+        
+        console.log("[v0] Connection saved successfully");
+        setPlatforms((prev) =>
+          prev.map((p) =>
+            p.id === connected
+              ? {
+                  ...p,
+                  status: "connected" as PlatformStatus,
+                  accountName: connectionData.accountName,
+                  profilePicture: connectionData.profilePicture,
+                }
+              : p
+          )
+        );
+        toast.success(`${connectionData.accountName} başarıyla bağlandı!`);
+      } catch (err) {
+        console.error("[v0] Failed to save connection:", err);
+        toast.error("Bağlantı kaydedilemedi. Lütfen tekrar deneyin.");
+      } finally {
+        setPendingConnection(null);
+      }
+    };
+    
+    processPendingConnection();
+  }, [pendingConnection]);
 
   const handleConnect = (platformId: string) => {
     setPlatforms((prev) =>
