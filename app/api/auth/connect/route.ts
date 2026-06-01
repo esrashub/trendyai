@@ -74,13 +74,16 @@ export async function GET(request: NextRequest) {
       "pages_show_list",
       "pages_read_engagement",
       "pages_manage_posts",
+      "business_management",
     ];
     const instagramScopes = [
       "instagram_basic",
       "instagram_content_publish",
+      "instagram_manage_insights",
       "pages_show_list",
       "pages_read_engagement",
       "pages_manage_posts",
+      "business_management",
     ];
     const scopes = platform === "instagram" ? instagramScopes : facebookScopes;
 
@@ -90,10 +93,8 @@ export async function GET(request: NextRequest) {
       scope: scopes.join(","),
       response_type: "code",
       state,
-      // rerequest: eksik sayfa iznini yeniden ister
+      // rerequest: izinleri yeniden ister (önceki token'ı geçersiz kılar)
       auth_type: "rerequest",
-      // enable_profile_selector: sayfa seçim adımını zorla göster
-      enable_profile_selector: "true",
     });
     authUrl = `${config.authUrl}?${params.toString()}`;
   } else if (provider === "linkedin") {

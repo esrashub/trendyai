@@ -128,6 +128,15 @@ export async function GET(
         tokenData.access_token = longLivedData.access_token;
         tokenData.expires_in = longLivedData.expires_in;
       }
+      
+      // Debug: Save access token to cookie for testing
+      cookieStore.set("debug_access_token", tokenData.access_token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 60 * 60, // 1 hour
+        path: "/",
+      });
     } else if (provider === "linkedin") {
       const tokenResponse = await fetch(config.tokenUrl, {
         method: "POST",
@@ -186,20 +195,78 @@ export async function GET(
       const meData = await meResponse.json();
 
       if (platform === "instagram") {
-        // Get Instagram Business Account
+        // Get Facebook Pages with their access tokens
         const accountsResponse = await fetch(
-          `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,instagram_business_account{id,username,profile_picture_url}&access_token=${tokenData.access_token}`
+          `https://graph.facebook.com/v19.0/me/accounts?fields=id,name,access_token,instagram_business_account{id,username,profile_picture_url}&access_token=${tokenData.access_token}`
         );
         const accountsData = await accountsResponse.json();
         
-        const pageWithInstagram = accountsData.data?.find(
+        console.log("[OAuth/Instagram] Full /me/accounts response:", JSON.stringify(accountsData));
+        
+        if (accountsData.error) {
+          console.error("[OAuth/Instagram] API error:", accountsData.error);
+          return NextResponse.redirect(
+            `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=facebook_api_error&details=${encodeURIComponent(accountsData.error.message || "Unknown error")}`
+          );
+        }
+        
+        const pages = accountsData.data || [];
+        const pageNames = pages.map((p: { name: string }) => p.name).join(", ") || "none";
+        console.log("[OAuth/Instagram] Pages found:", pageNames);
+
+        if (pages.length === 0) {
+          console.warn("[OAuth/Instagram] No Facebook pages found");
+          return NextResponse.redirect(
+            `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=no_facebook_page`
+          );
+        }
+
+        // First try to find a page that already has instagram_business_account in the response
+        let pageWithInstagram = pages.find(
           (page: { instagram_business_account?: { id: string } }) => page.instagram_business_account
         );
 
+        // Collect debug info for each page
+        const debugInfo: string[] = [];
+
+        // If not found in initial response, query each page individually
+        if (!pageWithInstagram) {
+          console.log("[OAuth/Instagram] No instagram_business_account in initial response, querying pages individually...");
+          
+          for (const page of pages) {
+            try {
+              const pageResponse = await fetch(
+                `https://graph.facebook.com/v19.0/${page.id}?fields=instagram_business_account{id,username,profile_picture_url}&access_token=${page.access_token || tokenData.access_token}`
+              );
+              const pageData = await pageResponse.json();
+              
+              console.log(`[OAuth/Instagram] Page ${page.name} (${page.id}) response:`, JSON.stringify(pageData));
+              
+              // Collect debug info
+              debugInfo.push(`${page.name}:${pageData.instagram_business_account ? 'HAS_IG' : (pageData.error?.message || 'NO_IG')}`);
+              
+              if (pageData.instagram_business_account) {
+                pageWithInstagram = {
+                  ...page,
+                  instagram_business_account: pageData.instagram_business_account,
+                };
+                break;
+              }
+            } catch (pageErr) {
+              console.error(`[OAuth/Instagram] Error querying page ${page.name}:`, pageErr);
+              debugInfo.push(`${page.name}:ERROR`);
+            }
+          }
+        } else {
+          debugInfo.push(`${pageWithInstagram.name}:HAS_IG_INITIAL`);
+        }
+
         if (!pageWithInstagram?.instagram_business_account) {
-          return NextResponse.redirect(
-            `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=no_instagram_business`
-          );
+          console.warn("[OAuth/Instagram] No Instagram Business account found on any page. Pages:", pageNames);
+          const debugStr = debugInfo.length > 0 ? debugInfo.join('|') : 'no_debug';
+          const redirectUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=no_instagram_business&pages=${encodeURIComponent(pageNames || 'empty')}&debug=${encodeURIComponent(debugStr)}&v=2`;
+          console.log("[OAuth/Instagram] Redirecting to:", redirectUrl);
+          return NextResponse.redirect(redirectUrl);
         }
 
         accountInfo = {
@@ -207,7 +274,10 @@ export async function GET(
           accountName: pageWithInstagram.instagram_business_account.username || meData.name,
           profilePicture: pageWithInstagram.instagram_business_account.profile_picture_url,
           pageId: pageWithInstagram.id,
+          pageAccessToken: pageWithInstagram.access_token || tokenData.access_token,
         };
+        
+        console.log("[OAuth/Instagram] Successfully found Instagram Business account:", accountInfo.accountName);
       } else {
         // Facebook Page
         const pagesResponse = await fetch(
