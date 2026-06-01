@@ -132,7 +132,7 @@ export default function BrandIdentityPage() {
 
     try {
       const ext = file.name.split(".").pop();
-      const storageRef = ref(storage, `logos/${uid}/logo_${Date.now()}.${ext}`);
+      const storageRef = ref(storage, `brand-assets/${uid}/logo_${Date.now()}.${ext}`);
       const uploadTask = uploadBytesResumable(storageRef, file);
 
       uploadTask.on(
