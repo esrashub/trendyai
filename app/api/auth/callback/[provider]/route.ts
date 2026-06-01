@@ -14,18 +14,10 @@ export async function GET(
   const state = searchParams.get("state");
   const error = searchParams.get("error");
 
-  console.log("[OAuth Callback] Provider:", provider);
-  console.log("[OAuth Callback] State:", state);
-  console.log("[OAuth Callback] Code exists:", !!code);
-  console.log("[OAuth Callback] Error:", error);
-
   const cookieStore = await cookies();
   const storedState = cookieStore.get("oauth_state")?.value;
   const cookiePlatform = cookieStore.get("oauth_platform")?.value;
   const codeVerifier = cookieStore.get("oauth_code_verifier")?.value;
-
-  console.log("[OAuth Callback] Stored state cookie:", storedState);
-  console.log("[OAuth Callback] Platform cookie:", cookiePlatform);
 
   // Platform'u state'ten parse et (cookie kaybolursa fallback).
   // State formatı: `${platform}-${nonce}` — connect route'unda set edildi.
@@ -33,9 +25,6 @@ export async function GET(
     ? state.split("-")[0]
     : undefined;
   const platform = platformFromState || cookiePlatform;
-  
-  console.log("[OAuth Callback] Platform from state:", platformFromState);
-  console.log("[OAuth Callback] Final platform:", platform);
 
   // Clean up cookies
   cookieStore.delete("oauth_state");
@@ -115,13 +104,8 @@ export async function GET(
         code,
       });
 
-      console.log("[OAuth/Meta] Token request redirect_uri:", config.redirectUri);
-
       const tokenResponse = await fetch(`${config.tokenUrl}?${tokenParams.toString()}`);
       tokenData = await tokenResponse.json();
-
-      console.log("[OAuth/Meta] Token response status:", tokenResponse.status);
-      console.log("[OAuth/Meta] Token response:", JSON.stringify(tokenData, null, 2));
 
       if (!tokenData.access_token) {
         throw new Error("No access token received from Meta");

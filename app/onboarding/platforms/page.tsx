@@ -21,6 +21,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { OnboardingStepper } from "@/components/layout/onboarding-stepper";
 import { saveConnectedPlatform, getConnectedPlatforms, disconnectPlatform } from "@/lib/api";
+import { auth } from "@/lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
 
 type PlatformStatus = "disconnected" | "connecting" | "connected" | "expired";
 
@@ -46,6 +48,11 @@ function PlatformsContent() {
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingData, setIsLoadingData] = useState(true);
+  const [authReady, setAuthReady] = useState(false);
+  const [pendingConnection, setPendingConnection] = useState<{
+    connected: string;
+    data: string;
+  } | null>(null);
   const [platforms, setPlatforms] = useState<Platform[]>([
     {
       id: "instagram",
@@ -85,6 +92,15 @@ function PlatformsContent() {
     },
   ]);
 
+  // Wait for Firebase auth to be ready
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      console.log("[v0] Auth state changed, user:", user?.uid);
+      setAuthReady(true);
+    });
+    return () => unsubscribe();
+  }, []);
+
   // Load existing connections on mount
   useEffect(() => {
     const loadConnections = async () => {
@@ -115,7 +131,7 @@ function PlatformsContent() {
     loadConnections();
   }, []);
 
-  // Handle OAuth callback
+  // Handle OAuth callback - store pending connection until auth is ready
   useEffect(() => {
     const connected = searchParams.get("connected");
     const data = searchParams.get("data");
@@ -135,37 +151,54 @@ function PlatformsContent() {
       return;
     }
 
+    // If we have connection data, store it as pending until auth is ready
     if (connected && data) {
-      try {
-        const connectionData = JSON.parse(atob(data));
-        
-        saveConnectedPlatform(connectionData)
-          .then(() => {
-            setPlatforms((prev) =>
-              prev.map((p) =>
-                p.id === connected
-                  ? {
-                      ...p,
-                      status: "connected" as PlatformStatus,
-                      accountName: connectionData.accountName,
-                      profilePicture: connectionData.profilePicture,
-                    }
-                  : p
-              )
-            );
-            toast.success(`${connectionData.accountName} başarıyla bağlandı!`);
-          })
-          .catch((err) => {
-            console.error("Failed to save connection:", err);
-            toast.error("Bağlantı kaydedilemedi");
-          });
-
-        router.replace("/onboarding/platforms");
-      } catch (err) {
-        console.error("Failed to parse connection data:", err);
-      }
+      console.log("[v0] Connection data received, storing as pending");
+      setPendingConnection({ connected, data });
+      // Clear URL params immediately to avoid re-processing
+      router.replace("/onboarding/platforms");
     }
   }, [searchParams, router]);
+
+  // Process pending connection once auth is ready
+  useEffect(() => {
+    if (!authReady || !pendingConnection) return;
+
+    const { connected, data } = pendingConnection;
+    console.log("[v0] Auth ready, processing pending connection for:", connected);
+
+    try {
+      const connectionData = JSON.parse(atob(data));
+      
+      saveConnectedPlatform(connectionData)
+        .then(() => {
+          console.log("[v0] Connection saved successfully");
+          setPlatforms((prev) =>
+            prev.map((p) =>
+              p.id === connected
+                ? {
+                    ...p,
+                    status: "connected" as PlatformStatus,
+                    accountName: connectionData.accountName,
+                    profilePicture: connectionData.profilePicture,
+                  }
+                : p
+            )
+          );
+          toast.success(`${connectionData.accountName} başarıyla bağlandı!`);
+        })
+        .catch((err) => {
+          console.error("[v0] Failed to save connection:", err);
+          toast.error("Bağlantı kaydedilemedi. Lütfen tekrar deneyin.");
+        })
+        .finally(() => {
+          setPendingConnection(null);
+        });
+    } catch (err) {
+      console.error("[v0] Failed to parse connection data:", err);
+      setPendingConnection(null);
+    }
+  }, [authReady, pendingConnection]);
 
   const handleConnect = (platformId: string) => {
     setPlatforms((prev) =>
@@ -224,10 +257,13 @@ function PlatformsContent() {
     router.push("/onboarding/content-preferences");
   };
 
-  if (isLoadingData) {
+  if (isLoadingData || pendingConnection) {
     return (
-      <div className="flex min-h-[400px] items-center justify-center">
+      <div className="flex min-h-[400px] flex-col items-center justify-center gap-2">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        {pendingConnection && (
+          <p className="text-sm text-muted-foreground">Bağlantı kaydediliyor...</p>
+        )}
       </div>
     );
   }
