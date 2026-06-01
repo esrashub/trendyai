@@ -192,26 +192,24 @@ export async function GET(
         );
         const accountsData = await accountsResponse.json();
         
-        console.log("[OAuth/Instagram] /me/accounts response:", JSON.stringify({
-          pageCount: accountsData.data?.length ?? 0,
-          pages: accountsData.data?.map((p: { id: string; name: string; instagram_business_account?: { id: string; username?: string } }) => ({
-            id: p.id,
-            name: p.name,
-            hasInstagram: !!p.instagram_business_account,
-            instagramId: p.instagram_business_account?.id,
-            instagramUsername: p.instagram_business_account?.username,
-          })),
-          error: accountsData.error ?? null,
-        }));
+        // Log for debugging
+        const pageNames = accountsData.data?.map((p: { name: string }) => p.name).join(", ") || "none";
+        console.log("[OAuth/Instagram] Pages found:", pageNames);
+        console.log("[OAuth/Instagram] Full response:", JSON.stringify(accountsData, null, 2));
 
         const pageWithInstagram = accountsData.data?.find(
           (page: { instagram_business_account?: { id: string } }) => page.instagram_business_account
         );
 
         if (!pageWithInstagram?.instagram_business_account) {
-          console.warn("[OAuth/Instagram] No Instagram Business account found on any page");
+          // Provide more helpful error with page names
+          const pagesInfo = accountsData.data?.length 
+            ? `Bulunan sayfalar: ${pageNames}. Bu sayfalara bağlı Instagram Business hesabı yok.`
+            : "Hiç Facebook sayfası bulunamadı.";
+          console.warn("[OAuth/Instagram] No Instagram Business account found.", pagesInfo);
+          
           return NextResponse.redirect(
-            `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=no_instagram_business`
+            `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=no_instagram_business&pages=${encodeURIComponent(pageNames)}`
           );
         }
 
