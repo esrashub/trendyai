@@ -140,22 +140,44 @@ function PlatformsContent() {
     if (error) {
       const pages = searchParams.get("pages");
       const details = searchParams.get("details");
-      const errorMessages: Record<string, string> = {
-        invalid_state: "Güvenlik doğrulaması başarısız. Lütfen tekrar deneyin.",
-        no_code: "Yetkilendirme kodu alınamadı.",
-        token_exchange_failed: "Token alınamadı. Lütfen tekrar deneyin.",
-        no_instagram_business: pages 
-          ? `Instagram Business hesabı bulunamadı. Sayfalar: ${pages}. Instagram'ı bu sayfalardan birine Business hesabı olarak bağlayın.`
-          : "Instagram Business hesabı bulunamadı. Instagram'ı bir Facebook sayfasına Business olarak bağlayın.",
-        no_facebook_page: "Facebook sayfası bulunamadı. Lütfen yönetici olduğunuz bir Facebook sayfası oluşturun ve bağlantı sırasında izin verin.",
-        access_denied: "Erişim reddedildi. Lütfen tüm izinleri onaylayın.",
-        facebook_api_error: details 
-          ? `Facebook API hatası: ${details}`
-          : "Facebook API hatası. Lütfen tekrar deneyin.",
-      };
-      toast.error(errorMessages[error] || `Bağlantı hatası: ${error}`, {
-        duration: 10000,
-      });
+      const debug = searchParams.get("debug");
+      
+      let errorMessage = "";
+      
+      switch (error) {
+        case "invalid_state":
+          errorMessage = "Güvenlik doğrulaması başarısız. Lütfen tekrar deneyin.";
+          break;
+        case "no_code":
+          errorMessage = "Yetkilendirme kodu alınamadı.";
+          break;
+        case "token_exchange_failed":
+          errorMessage = "Token alınamadı. Lütfen tekrar deneyin.";
+          break;
+        case "no_instagram_business":
+          errorMessage = pages 
+            ? `Instagram Business bulunamadı. Sayfalar: ${pages}.`
+            : "Instagram Business hesabı bulunamadı.";
+          if (debug) {
+            errorMessage += ` Debug: ${debug}`;
+          }
+          break;
+        case "no_facebook_page":
+          errorMessage = "Facebook sayfası bulunamadı. Yetkilendirme sırasında sayfa izni verdiğinizden emin olun.";
+          break;
+        case "access_denied":
+          errorMessage = "Erişim reddedildi. Lütfen tüm izinleri onaylayın.";
+          break;
+        case "facebook_api_error":
+          errorMessage = details 
+            ? `Facebook API hatası: ${details}`
+            : "Facebook API hatası. Lütfen tekrar deneyin.";
+          break;
+        default:
+          errorMessage = `Bağlantı hatası: ${error}`;
+      }
+      
+      toast.error(errorMessage, { duration: 15000 });
       router.replace("/onboarding/platforms");
       return;
     }

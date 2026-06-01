@@ -226,6 +226,9 @@ export async function GET(
           (page: { instagram_business_account?: { id: string } }) => page.instagram_business_account
         );
 
+        // Collect debug info for each page
+        const debugInfo: string[] = [];
+
         // If not found in initial response, query each page individually
         if (!pageWithInstagram) {
           console.log("[OAuth/Instagram] No instagram_business_account in initial response, querying pages individually...");
@@ -239,6 +242,9 @@ export async function GET(
               
               console.log(`[OAuth/Instagram] Page ${page.name} (${page.id}) response:`, JSON.stringify(pageData));
               
+              // Collect debug info
+              debugInfo.push(`${page.name}:${pageData.instagram_business_account ? 'HAS_IG' : (pageData.error?.message || 'NO_IG')}`);
+              
               if (pageData.instagram_business_account) {
                 pageWithInstagram = {
                   ...page,
@@ -248,14 +254,18 @@ export async function GET(
               }
             } catch (pageErr) {
               console.error(`[OAuth/Instagram] Error querying page ${page.name}:`, pageErr);
+              debugInfo.push(`${page.name}:ERROR`);
             }
           }
+        } else {
+          debugInfo.push(`${pageWithInstagram.name}:HAS_IG_INITIAL`);
         }
 
         if (!pageWithInstagram?.instagram_business_account) {
           console.warn("[OAuth/Instagram] No Instagram Business account found on any page. Pages:", pageNames);
+          const debugStr = debugInfo.join('|');
           return NextResponse.redirect(
-            `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=no_instagram_business&pages=${encodeURIComponent(pageNames)}`
+            `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=no_instagram_business&pages=${encodeURIComponent(pageNames)}&debug=${encodeURIComponent(debugStr)}`
           );
         }
 
