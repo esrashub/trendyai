@@ -139,19 +139,22 @@ function PlatformsContent() {
 
     if (error) {
       const pages = searchParams.get("pages");
+      const details = searchParams.get("details");
       const errorMessages: Record<string, string> = {
         invalid_state: "Güvenlik doğrulaması başarısız. Lütfen tekrar deneyin.",
         no_code: "Yetkilendirme kodu alınamadı.",
         token_exchange_failed: "Token alınamadı. Lütfen tekrar deneyin.",
         no_instagram_business: pages 
-          ? `Instagram Business hesabı bulunamadı. Facebook sayfalarınız (${pages}) Instagram Business hesabına bağlı değil. Instagram uygulamasında Ayarlar > Hesap > Profesyonel hesaba geç yapıp Facebook sayfanızı seçin.`
-          : "Instagram Business hesabı bulunamadı. Lütfen bir Facebook sayfasına bağlı Instagram Business hesabınız olduğundan emin olun.",
-        no_facebook_page: "Facebook sayfası bulunamadı. Lütfen yönetici olduğunuz bir Facebook sayfası oluşturun ve izin verin.",
-        access_denied: "Erişim reddedildi. Lütfen izinleri onaylayın.",
-        facebook_api_error: "Facebook API hatası. Lütfen tekrar deneyin.",
+          ? `Instagram Business hesabı bulunamadı. Sayfalar: ${pages}. Instagram'ı bu sayfalardan birine Business hesabı olarak bağlayın.`
+          : "Instagram Business hesabı bulunamadı. Instagram'ı bir Facebook sayfasına Business olarak bağlayın.",
+        no_facebook_page: "Facebook sayfası bulunamadı. Lütfen yönetici olduğunuz bir Facebook sayfası oluşturun ve bağlantı sırasında izin verin.",
+        access_denied: "Erişim reddedildi. Lütfen tüm izinleri onaylayın.",
+        facebook_api_error: details 
+          ? `Facebook API hatası: ${details}`
+          : "Facebook API hatası. Lütfen tekrar deneyin.",
       };
       toast.error(errorMessages[error] || `Bağlantı hatası: ${error}`, {
-        duration: 10000, // Show longer for detailed messages
+        duration: 10000,
       });
       router.replace("/onboarding/platforms");
       return;
