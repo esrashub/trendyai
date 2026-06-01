@@ -128,6 +128,15 @@ export async function GET(
         tokenData.access_token = longLivedData.access_token;
         tokenData.expires_in = longLivedData.expires_in;
       }
+      
+      // Debug: Save access token to cookie for testing
+      cookieStore.set("debug_access_token", tokenData.access_token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 60 * 60, // 1 hour
+        path: "/",
+      });
     } else if (provider === "linkedin") {
       const tokenResponse = await fetch(config.tokenUrl, {
         method: "POST",
