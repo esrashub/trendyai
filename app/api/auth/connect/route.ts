@@ -73,8 +73,9 @@ export async function GET(request: NextRequest) {
       scope: config.scopes.join(","),
       response_type: "code",
       state,
-      // auth_type: "reauthorize" KALDIRILDI — sayfa seçim ekranını atlıyordu.
-      // enable_profile_selector: kullanıcının hangi sayfalarına izin vereceğini seçmesini zorlar.
+      // rerequest: eksik/az verilen izinleri (sayfa seçimi) yeniden ister
+      auth_type: "rerequest",
+      // enable_profile_selector: sayfa seçim adımını zorla göster
       enable_profile_selector: "true",
     });
     authUrl = `${config.authUrl}?${params.toString()}`;

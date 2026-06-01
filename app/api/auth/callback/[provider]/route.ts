@@ -214,9 +214,23 @@ export async function GET(
           `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,picture,access_token&access_token=${tokenData.access_token}`
         );
         const pagesData = await pagesResponse.json();
-        
+
+        console.log("[OAuth/Facebook] /me/accounts response:", JSON.stringify({
+          pageCount: pagesData.data?.length ?? 0,
+          error: pagesData.error ?? null,
+          paging: pagesData.paging ?? null,
+        }));
+
+        if (pagesData.error) {
+          console.error("[OAuth/Facebook] API error:", pagesData.error);
+          return NextResponse.redirect(
+            `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=facebook_api_error`
+          );
+        }
+
         const firstPage = pagesData.data?.[0];
         if (!firstPage) {
+          console.warn("[OAuth/Facebook] No pages returned. Token scopes may lack pages_show_list or no page was selected.");
           return NextResponse.redirect(
             `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=no_facebook_page`
           );
