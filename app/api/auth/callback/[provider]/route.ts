@@ -263,10 +263,10 @@ export async function GET(
 
         if (!pageWithInstagram?.instagram_business_account) {
           console.warn("[OAuth/Instagram] No Instagram Business account found on any page. Pages:", pageNames);
-          const debugStr = debugInfo.join('|');
-          return NextResponse.redirect(
-            `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=no_instagram_business&pages=${encodeURIComponent(pageNames)}&debug=${encodeURIComponent(debugStr)}`
-          );
+          const debugStr = debugInfo.length > 0 ? debugInfo.join('|') : 'no_debug';
+          const redirectUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=no_instagram_business&pages=${encodeURIComponent(pageNames || 'empty')}&debug=${encodeURIComponent(debugStr)}&v=2`;
+          console.log("[OAuth/Instagram] Redirecting to:", redirectUrl);
+          return NextResponse.redirect(redirectUrl);
         }
 
         accountInfo = {
