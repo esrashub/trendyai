@@ -203,6 +203,7 @@ export async function saveBrandIdentity(data: BrandIdentityFormData): Promise<{ 
       ctaPreference: data.ctaPreference ?? "",
     },
     visualIdentity: {
+      ...(data.logoUrl && { logoUrl: data.logoUrl }),
       mainColors: data.mainColors ?? "",
       visualStyle: data.visualStyle ?? "",
       designNotes: data.designNotes ?? "",
@@ -246,6 +247,7 @@ export async function getBrandIdentityFormData(): Promise<BrandIdentityFormData 
     goals: data.contentStrategy?.goals ?? [],
     themes: data.contentStrategy?.themes ?? "",
     ctaPreference: data.contentStrategy?.ctaPreference ?? "",
+    logoUrl: data.visualIdentity?.logoUrl,
     mainColors: data.visualIdentity?.mainColors ?? "",
     visualStyle: data.visualIdentity?.visualStyle ?? "",
     designNotes: data.visualIdentity?.designNotes ?? "",

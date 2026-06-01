@@ -338,6 +338,7 @@ export interface BrandIdentityFormData {
   goals: string[];
   themes: string;
   ctaPreference: string;
+  logoUrl?: string;
   mainColors: string;
   visualStyle: string;
   designNotes: string;

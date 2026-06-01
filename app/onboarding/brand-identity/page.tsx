@@ -13,6 +13,8 @@ import {
   Mic2,
   Target,
   Palette,
+  Upload,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +38,8 @@ import {
 import { toast } from "sonner";
 import { OnboardingStepper } from "@/components/layout/onboarding-stepper";
 import { saveBrandIdentity, generateBrandSummary, getBrandIdentityFormData } from "@/lib/api";
+import { storage, auth } from "@/lib/firebase";
+import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
 import {
   toneOptions,
   communicationStyleOptions,
@@ -65,6 +69,7 @@ const EMPTY_FORM: BrandIdentityFormData = {
   goals: [],
   themes: "",
   ctaPreference: "",
+  logoUrl: "",
   mainColors: "",
   visualStyle: "",
   designNotes: "",
@@ -78,6 +83,8 @@ export default function BrandIdentityPage() {
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   // Firebase'den verileri yükle
   useEffect(() => {
@@ -98,6 +105,70 @@ export default function BrandIdentityPage() {
     };
     loadData();
   }, []);
+
+  const handleLogoUpload = async (file: File) => {
+    if (!file) return;
+
+    // Dosya tipi kontrolü
+    const allowed = ["image/jpeg", "image/png", "image/webp", "image/svg+xml"];
+    if (!allowed.includes(file.type)) {
+      toast.error("Sadece JPG, PNG, WEBP veya SVG yükleyebilirsiniz.");
+      return;
+    }
+    // Boyut kontrolü (2 MB)
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("Logo dosyası 2 MB'dan küçük olmalıdır.");
+      return;
+    }
+
+    const uid = auth.currentUser?.uid;
+    if (!uid) {
+      toast.error("Oturum açık değil.");
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadProgress(0);
+
+    try {
+      const ext = file.name.split(".").pop();
+      const storageRef = ref(storage, `logos/${uid}/logo_${Date.now()}.${ext}`);
+      const uploadTask = uploadBytesResumable(storageRef, file);
+
+      uploadTask.on(
+        "state_changed",
+        (snapshot) => {
+          const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+          setUploadProgress(pct);
+        },
+        (error) => {
+          console.error("[Logo Upload] Error:", error);
+          toast.error("Logo yüklenemedi. Lütfen tekrar deneyin.");
+          setIsUploading(false);
+        },
+        async () => {
+          const url = await getDownloadURL(uploadTask.snapshot.ref);
+          set("logoUrl", url);
+          setIsUploading(false);
+          toast.success("Logo başarıyla yüklendi!");
+        }
+      );
+    } catch (err) {
+      console.error("[Logo Upload] Unexpected error:", err);
+      toast.error("Logo yüklenemedi.");
+      setIsUploading(false);
+    }
+  };
+
+  const handleLogoRemove = async () => {
+    if (!formData.logoUrl) return;
+    try {
+      const storageRef = ref(storage, formData.logoUrl);
+      await deleteObject(storageRef).catch(() => {}); // yoksa sessizce geç
+    } finally {
+      set("logoUrl", "");
+    }
+  };
 
   const validate = () => {
     const e: Record<string, string> = {};
@@ -479,9 +550,66 @@ export default function BrandIdentityPage() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label>Logo</Label>
-                <div className="flex h-24 items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted/30 text-sm text-muted-foreground">
-                  Logo yükleme — backend entegrasyonunda aktif olacak
-                </div>
+                {formData.logoUrl ? (
+                  /* Logo yüklendi — önizleme */
+                  <div className="relative inline-flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-3">
+                    <img
+                      src={formData.logoUrl}
+                      alt="Logo önizleme"
+                      className="h-16 w-16 rounded object-contain"
+                    />
+                    <div className="text-sm">
+                      <p className="font-medium text-foreground">Logo yüklendi</p>
+                      <p className="text-xs text-muted-foreground">
+                        Değiştirmek için yeni dosya seçin
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleLogoRemove}
+                      className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/80"
+                      title="Logoyu kaldır"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ) : (
+                  /* Upload alanı */
+                  <label
+                    className={`flex h-24 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed transition-colors ${
+                      isUploading
+                        ? "border-primary/40 bg-primary/5"
+                        : "border-border bg-muted/30 hover:border-primary/50 hover:bg-muted/50"
+                    }`}
+                  >
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/svg+xml"
+                      className="sr-only"
+                      disabled={isUploading}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleLogoUpload(file);
+                        e.target.value = "";
+                      }}
+                    />
+                    {isUploading ? (
+                      <>
+                        <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                        <span className="text-xs text-primary">
+                          Yükleniyor %{uploadProgress}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="h-5 w-5 text-muted-foreground" />
+                        <span className="text-xs text-muted-foreground">
+                          JPG, PNG, WEBP veya SVG · maks. 2 MB
+                        </span>
+                      </>
+                    )}
+                  </label>
+                )}
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
