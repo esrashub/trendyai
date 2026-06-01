@@ -67,13 +67,30 @@ export async function GET(request: NextRequest) {
   let authUrl: string;
 
   if (provider === "meta") {
+    // Facebook ve Instagram için farklı scope setleri kullan.
+    // instagram_basic / instagram_content_publish Facebook bağlantısında
+    // /me/accounts API'sini bozuyor — sadece Instagram bağlarken gönder.
+    const facebookScopes = [
+      "pages_show_list",
+      "pages_read_engagement",
+      "pages_manage_posts",
+    ];
+    const instagramScopes = [
+      "instagram_basic",
+      "instagram_content_publish",
+      "pages_show_list",
+      "pages_read_engagement",
+      "pages_manage_posts",
+    ];
+    const scopes = platform === "instagram" ? instagramScopes : facebookScopes;
+
     const params = new URLSearchParams({
       client_id: config.clientId,
       redirect_uri: config.redirectUri,
-      scope: config.scopes.join(","),
+      scope: scopes.join(","),
       response_type: "code",
       state,
-      // rerequest: eksik/az verilen izinleri (sayfa seçimi) yeniden ister
+      // rerequest: eksik sayfa iznini yeniden ister
       auth_type: "rerequest",
       // enable_profile_selector: sayfa seçim adımını zorla göster
       enable_profile_selector: "true",
