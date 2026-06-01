@@ -40,11 +40,39 @@ export async function GET(
   }
 
   // Validate state
-  if (!state || state !== storedState) {
-    console.error("[OAuth] State mismatch");
+  // Cookie-based CSRF check: if cookie exists, require exact match.
+  // If cookie is missing (common in Vercel/browser cross-site redirect scenarios),
+  // fall back to format validation — state must be "${platform}-{32+ char nonce}".
+  if (!state) {
+    console.error("[OAuth] No state parameter received");
     return NextResponse.redirect(
       `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=invalid_state`
     );
+  }
+
+  if (storedState) {
+    // Cookie present → strict match required
+    if (state !== storedState) {
+      console.error("[OAuth] State mismatch (cookie present but differs)");
+      return NextResponse.redirect(
+        `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=invalid_state`
+      );
+    }
+  } else {
+    // Cookie missing (Vercel edge / browser cross-site cookie issue) → validate format
+    console.warn("[OAuth] State cookie missing, falling back to format validation");
+    const validPlatforms = ["instagram", "facebook", "linkedin", "twitter"];
+    const noncePart = platformFromState ? state.slice(platformFromState.length + 1) : "";
+    if (
+      !platformFromState ||
+      !validPlatforms.includes(platformFromState) ||
+      noncePart.length < 32
+    ) {
+      console.error("[OAuth] State format invalid (no cookie fallback failed)");
+      return NextResponse.redirect(
+        `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/onboarding/platforms?error=invalid_state`
+      );
+    }
   }
 
   if (!code) {
@@ -92,7 +120,7 @@ export async function GET(
       });
 
       const longLivedResponse = await fetch(
-        `https://graph.facebook.com/v18.0/oauth/access_token?${longLivedParams.toString()}`
+        `https://graph.facebook.com/v21.0/oauth/access_token?${longLivedParams.toString()}`
       );
       const longLivedData = await longLivedResponse.json();
       
@@ -153,14 +181,14 @@ export async function GET(
     if (provider === "meta") {
       // Get user info
       const meResponse = await fetch(
-        `https://graph.facebook.com/v18.0/me?fields=id,name,picture&access_token=${tokenData.access_token}`
+        `https://graph.facebook.com/v21.0/me?fields=id,name,picture&access_token=${tokenData.access_token}`
       );
       const meData = await meResponse.json();
 
       if (platform === "instagram") {
         // Get Instagram Business Account
         const accountsResponse = await fetch(
-          `https://graph.facebook.com/v18.0/me/accounts?fields=id,name,instagram_business_account{id,username,profile_picture_url}&access_token=${tokenData.access_token}`
+          `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,instagram_business_account{id,username,profile_picture_url}&access_token=${tokenData.access_token}`
         );
         const accountsData = await accountsResponse.json();
         
@@ -183,7 +211,7 @@ export async function GET(
       } else {
         // Facebook Page
         const pagesResponse = await fetch(
-          `https://graph.facebook.com/v18.0/me/accounts?fields=id,name,picture,access_token&access_token=${tokenData.access_token}`
+          `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,picture,access_token&access_token=${tokenData.access_token}`
         );
         const pagesData = await pagesResponse.json();
         

@@ -13,8 +13,8 @@ export const oauthConfig = {
       "pages_read_engagement",
       "pages_manage_posts",
     ],
-    authUrl: "https://www.facebook.com/v18.0/dialog/oauth",
-    tokenUrl: "https://graph.facebook.com/v18.0/oauth/access_token",
+    authUrl: "https://www.facebook.com/v21.0/dialog/oauth",
+    tokenUrl: "https://graph.facebook.com/v21.0/oauth/access_token",
   },
 
   // LinkedIn

@@ -35,7 +35,7 @@ async function postToInstagram(
 
     // Step 1: Create media container
     const mediaResponse = await fetch(
-      `https://graph.facebook.com/v18.0/${accountId}/media`,
+      `https://graph.facebook.com/v21.0/${accountId}/media`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -54,7 +54,7 @@ async function postToInstagram(
 
     // Step 2: Publish the container
     const publishResponse = await fetch(
-      `https://graph.facebook.com/v18.0/${accountId}/media_publish`,
+      `https://graph.facebook.com/v21.0/${accountId}/media_publish`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -92,7 +92,7 @@ async function postToFacebook(
 
     if (mediaUrls && mediaUrls.length > 0) {
       // Post with photo
-      endpoint = `https://graph.facebook.com/v18.0/${targetPageId}/photos`;
+      endpoint = `https://graph.facebook.com/v21.0/${targetPageId}/photos`;
       body = {
         url: mediaUrls[0],
         caption: content,
@@ -100,7 +100,7 @@ async function postToFacebook(
       };
     } else {
       // Text-only post
-      endpoint = `https://graph.facebook.com/v18.0/${targetPageId}/feed`;
+      endpoint = `https://graph.facebook.com/v21.0/${targetPageId}/feed`;
       body = {
         message: content,
         access_token: token,

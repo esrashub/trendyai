@@ -52,7 +52,8 @@ export async function GET(request: NextRequest) {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 3600, // 60 dk (önceki 10 dk yetersizdi)
+    maxAge: 3600, // 60 dk
+    path: "/",   // tüm path'lerde geçerli (callback dahil)
   });
 
   cookieStore.set("oauth_platform", platform, {
@@ -60,6 +61,7 @@ export async function GET(request: NextRequest) {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     maxAge: 3600,
+    path: "/",
   });
 
   let authUrl: string;

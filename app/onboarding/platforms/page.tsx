@@ -81,7 +81,7 @@ function PlatformsContent() {
       description:
         "Facebook sayfanızla geniş kitlelere ulaşın ve topluluk oluşturun.",
       status: "disconnected",
-      enabled: false,
+      enabled: true,
     },
   ]);
 
